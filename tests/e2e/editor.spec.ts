@@ -78,3 +78,40 @@ test('mobile touch moves a layer and restores it after reload', async ({ browser
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/mobile.png', fullPage: true }); await context.close();
 });
+
+test('photo preview switches physical frames with orientation and preserves the full artwork', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '床頭櫃', exact: true })).toBeVisible();
+  await upload(page);
+  const layers = (await draft(page)).design.layers;
+  for (const scene of ['床頭櫃', '電腦桌']) {
+    await page.getByRole('button', { name: scene, exact: true }).click();
+    await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /photo-v1.webp$/);
+    await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
+    const original = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL());
+    await page.getByLabel('商品方向').selectOption('landscape');
+    await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /landscape-v1.webp$/);
+    await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
+    const coverage = await page.locator('.photo-art-fit').evaluate(e => ({ w: parseFloat((e as HTMLElement).style.width), h: parseFloat((e as HTMLElement).style.height) }));
+    expect(coverage.w).toBeGreaterThan(85); expect(coverage.h).toBeGreaterThan(85);
+    const ratio = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.width / c.height);
+    expect(ratio).toBeCloseTo(210 / 148, 2);
+    await expect.poll(async () => (await draft(page)).design.orientation).toBe('landscape');
+    expect((await draft(page)).design.layers).toEqual(layers);
+    await page.getByRole('button', { name: '⤢ 放大情境預覽', exact: true }).click();
+    await expect(page.getByRole('dialog').locator('.photo-scene > img')).toHaveAttribute('src', /landscape-v1.webp$/);
+    await expect(page.getByRole('dialog').locator('canvas')).toBeVisible();
+    await page.getByRole('dialog').screenshot({ path: `test-results/landscape-${scene}.png` });
+    await page.getByRole('button', { name: '關閉', exact: true }).click();
+    await page.getByLabel('商品方向').selectOption('portrait');
+    await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /photo-v1.webp$/);
+    await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
+    expect(await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL())).toBe(original);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel('商品方向').selectOption('landscape');
+  await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
+  await page.locator('.product-preview-panel').screenshot({ path: 'test-results/landscape-photo-mobile.png' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

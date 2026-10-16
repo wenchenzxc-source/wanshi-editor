@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Preview } from './Canvas';
+import { PhotoScene, photoScenes, type PhotoSceneId } from './PhotoScene';
 import type { Design, Template } from '../shared/model';
 import './product-scene.css';
 const scenes = [
@@ -15,17 +16,20 @@ function preference(key: string, allowed: string[], fallback: string) {
   try { const value = localStorage.getItem(key); return value && allowed.includes(value) ? value : fallback; } catch { return fallback; }
 }
 export function ProductScene({ design, template, images }: { design: Design; template: Template; images: Map<string, HTMLImageElement> }) {
-  const [scene, setScene] = useState(() => preference('wanshi:preview-scene', scenes.map(s => s.id), 'desk'));
+  const [scene, setScene] = useState(() => preference('wanshi:preview-scene', scenes.map(s => s.id), 'bedside'));
   const [finish, setFinish] = useState(() => preference('wanshi:preview-finish', finishes.map(f => f[0]), 'oak'));
+  const [expanded, setExpanded] = useState(false);
+  const photo = scene in photoScenes;
   const active = scenes.find(s => s.id === scene)!;
+  useEffect(() => { if (!expanded) return; const close = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, [expanded]);
   const standing = scene !== 'wall';
   useEffect(() => { try { localStorage.setItem('wanshi:preview-scene', scene); localStorage.setItem('wanshi:preview-finish', finish); } catch { /* Storage is optional for preview. */ } }, [scene, finish]);
   return <section className="product-preview-panel" aria-label="商品情境預覽設定">
     <div className="scene-control-label">陳列場景 <span>{active.name}</span></div>
     <div className="scene-buttons" role="group" aria-label="切換預覽場景">
-      {scenes.map(s => <button key={s.id} type="button" aria-pressed={scene === s.id} onClick={() => setScene(s.id)}><span className={`scene-thumbnail thumbnail-${s.id}`} aria-hidden="true"><i/></span><span>{s.name}</span></button>)}
+      {scenes.map(s => <button key={s.id} type="button" aria-pressed={scene === s.id} onClick={() => setScene(s.id)}><span className={`scene-thumbnail thumbnail-${s.id}`} style={s.id in photoScenes ? { backgroundImage: `url(${photoScenes[s.id as PhotoSceneId][design.orientation].src})` } : undefined} aria-hidden="true"><i/></span><span>{s.name}</span></button>)}
     </div>
-    <div className={`product-room scene-${scene} ${standing ? 'scene-standing' : ''} finish-${finish} ${design.orientation}`} aria-label={`${active.name}情境預覽`}>
+    {photo ? <><PhotoScene scene={scene as PhotoSceneId} design={design} template={template} images={images}/><button className="photo-expand" onClick={() => setExpanded(true)}>⤢ 放大情境預覽</button><p className="photo-scene-detail">原木實景框 · 保留紙面光影與材質</p></> : <><div className={`product-room scene-${scene} ${standing ? 'scene-standing' : ''} finish-${finish} ${design.orientation}`} aria-label={`${active.name}情境預覽`}>
       <div className="room-window-light" aria-hidden="true"/>
       {scene === 'bedside' && <div className="bedside-props" aria-hidden="true"><div className="bed-headboard"/><div className="bed-pillow"/><div className="bed-duvet"/><div className="bedside-lamp"><i/><b/><span/></div></div>}
       {scene === 'computer' && <div className="computer-props" aria-hidden="true"><div className="desktop-monitor"><div className="monitor-screen"><i/><b/><span/></div><div className="monitor-stand"/></div><div className="desktop-keyboard"/><div className="desktop-mouse"/></div>}
@@ -43,6 +47,8 @@ export function ProductScene({ design, template, images }: { design: Design; tem
     <div className="frame-finishes" role="group" aria-label="預覽畫框樣式">
       {finishes.map(([id, name]) => <button key={id} type="button" aria-pressed={finish === id} onClick={() => setFinish(id)}><i className={`finish-swatch swatch-${id}`} aria-hidden="true"/>{name}</button>)}
     </div>
-    <p className="preview-note">相框與場景為陳列示意，製作檔僅輸出設計。<br/>UV 為位置示意。</p>
+    </>}
+    <p className="preview-note">{photo ? "AI 生成寫實場景 · 設計即時融合於相框" : "相框與場景為陳列示意"}<br/>製作檔僅輸出設計；UV 為位置示意。</p>
+    {expanded && photo && <div className="modal-backdrop photo-modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal" role="dialog" aria-modal="true" aria-label="放大情境預覽" onClick={e => e.stopPropagation()}><header><span>{active.name} · 寫實融合預覽</span><button autoFocus onClick={() => setExpanded(false)}>關閉</button></header><PhotoScene scene={scene as PhotoSceneId} design={design} template={template} images={images}/><p>相框隨商品方向切換，設計依原比例完整展示。</p></section></div>}
   </section>;
 }
