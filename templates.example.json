@@ -1,0 +1,13 @@
+[
+  {
+    "id": "a5-plaque-v1",
+    "name": "A5 飾牌",
+    "version": 1,
+    "widthMm": 148,
+    "heightMm": 210,
+    "bleedMm": 3,
+    "safeMm": 5,
+    "dpi": 300,
+    "noProcess": []
+  }
+]
