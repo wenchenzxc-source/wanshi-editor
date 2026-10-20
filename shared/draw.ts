@@ -1,8 +1,8 @@
-import { dimensions, materials, type Design, type DesignLayer, type Template } from './model';
-export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number) {
+import { dimensions, materials, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template } from './model';
+export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number, clearOpacity = 0.16) {
   ctx.save();
   if (!d.material) { ctx.globalAlpha = d.backgroundOpacity; ctx.fillStyle = d.background; }
-  else if (d.material === 'clear') { ctx.fillStyle = 'rgba(215,235,240,0.16)'; }
+  else if (d.material === 'clear') { ctx.fillStyle = `rgba(215,235,240,${clearOpacity})`; }
   else if (d.material === 'white' || d.material === 'black') ctx.fillStyle = materials[d.material].color;
   else {
     const g = ctx.createLinearGradient(0, 0, w, h);
@@ -49,11 +49,28 @@ export function drawDesign(ctx: CanvasRenderingContext2D, d: Design, t: Template
   const { w, h, fullW, fullH } = dimensions(d, t), b = bleed ? t.bleedMm : 0;
   ctx.save(); ctx.scale(scale, scale);
   if (mode === 'mask') { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, bleed ? fullW : w, bleed ? fullH : h); }
-  else if (mode === 'preview' || !d.material) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h);
+  const radius = badgeRadius(d, t);
+  if (radius) { ctx.beginPath(); ctx.roundRect(b, b, w, h, radius); ctx.clip(); }
+  if (mode !== 'mask' && (mode === 'preview' || !d.material)) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h, t.presentation === 'acrylic-badge' ? 0.035 : 0.16);
   ctx.translate(b, b);
   for (const l of d.layers.filter(l => (l.face || 'front') === (!d.printStack && d.duplex ? d.activeFace || 'front' : 'front'))) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode); ctx.restore(); }
   if (mode === 'preview' && d.printView === 'acrylic') {
     const gloss = ctx.createLinearGradient(0, 0, w, h); gloss.addColorStop(0, '#ffffff55'); gloss.addColorStop(.45, '#ffffff08'); gloss.addColorStop(.5, '#ffffff35'); gloss.addColorStop(1, '#ffffff00'); ctx.fillStyle = gloss; ctx.fillRect(0, 0, w, h);
+  }
+  if (mode === 'preview' && t.presentation === 'acrylic-badge' && d.material === 'clear') {
+    ctx.save();
+    const edge = ctx.createLinearGradient(0, 0, w, h);
+    edge.addColorStop(0, '#ffffffd9'); edge.addColorStop(.35, '#cbe3e54d'); edge.addColorStop(.65, '#ffffffb3'); edge.addColorStop(1, '#8daeb166');
+    ctx.strokeStyle = edge; ctx.lineWidth = .35; ctx.beginPath(); ctx.roundRect(.2, .2, w - .4, h - .4, Math.max(0, radius - .2)); ctx.stroke();
+    const reflection = ctx.createLinearGradient(0, 0, w, h);
+    reflection.addColorStop(0, '#ffffff18'); reflection.addColorStop(.4, '#ffffff00'); reflection.addColorStop(.43, '#ffffff24'); reflection.addColorStop(.48, '#ffffff00'); reflection.addColorStop(1, '#ffffff05');
+    ctx.fillStyle = reflection; ctx.fillRect(0, 0, w, h); ctx.restore();
+  }
+  const slot = slotGeometry(d, t);
+  if (slot) {
+    ctx.save(); ctx.globalAlpha = 1;
+    if (mode !== 'mask') ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000000'; ctx.beginPath(); ctx.roundRect(slot.x, slot.y, slot.width, slot.height, slot.radius); ctx.fill(); ctx.restore();
   }
   ctx.restore();
 }

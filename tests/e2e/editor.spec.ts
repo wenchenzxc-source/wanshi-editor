@@ -193,7 +193,7 @@ test('print-order illustration explains hover and mobile help without changing s
 
 
 test('acrylic block product and size selection stay synchronized', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await expect(page.getByLabel('商品尺寸')).toHaveValue('mini-friend');
   await page.getByRole('button', { name: '底材', exact: true }).click();
   await expect(page.locator('.material-grid button')).toHaveCount(1);
@@ -214,7 +214,7 @@ test('acrylic block product and size selection stay synchronized', async ({ page
 
 
 test('custom acrylic dimensions and quotation notice survive reload', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('custom');
   await page.getByLabel('高 (mm)', { exact: true }).fill('80');
   await page.getByLabel('長 (mm)', { exact: true }).fill('55');
@@ -230,7 +230,7 @@ test('custom acrylic dimensions and quotation notice survive reload', async ({ p
 });
 
 test('block workspace fits small sizes and preview compares a fixed reference', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await expect(page.getByLabel('商品尺寸').locator('option')).toHaveCount(4);
   await expect(page.getByLabel('商品尺寸')).not.toContainText('舊規格');
   const area = page.getByTestId('editor-canvas');
@@ -255,7 +255,7 @@ test('block workspace fits small sizes and preview compares a fixed reference', 
 });
 
 test('retired block sizes are no longer presets and existing artwork keeps its dimensions', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.templateId).toBe('acrylic-block-v1');
   const saved = await draft(page);
   const response = await page.request.put(`/api/designs/${saved.design.id}`, { data: { design: { ...saved.design, sizeId: '100x100' }, baseRevision: saved.revision } });
@@ -271,7 +271,7 @@ test('retired block sizes are no longer presets and existing artwork keeps its d
 });
 
 test('oversized selection keeps corner handles reachable and resizes without changing product', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('small-block');
   await expect.poll(async () => (await draft(page)).design.sizeId).toBe('small-block');
   const saved = await draft(page);
@@ -297,7 +297,7 @@ test('oversized selection keeps corner handles reachable and resizes without cha
 });
 
 test('custom dimension inputs swap with orientation and edit the displayed axis', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('custom');
   await page.getByLabel('高 (mm)', { exact: true }).fill('90');
   await page.getByLabel('長 (mm)', { exact: true }).fill('50');
@@ -327,7 +327,7 @@ test('custom dimension inputs swap with orientation and edit the displayed axis'
 });
 
 test('dimension sliders synchronize inputs and thickness sits below the canvas', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('custom');
   await page.getByLabel('長 (mm)', { exact: true }).fill('60');
   await expect(page.getByRole('slider', { name: '長滑桿', exact: true })).toHaveValue('60');
@@ -352,7 +352,7 @@ test('dimension sliders synchronize inputs and thickness sits below the canvas',
 });
 
 test('custom dimension inputs snap to five mm and enforce upper limits', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('custom');
   const length = page.getByLabel('長 (mm)', { exact: true });
   await length.fill('63'); await length.blur(); await expect(length).toHaveValue('65');
@@ -374,7 +374,7 @@ test('custom dimension inputs snap to five mm and enforce upper limits', async (
 });
 
 test('thickness follows the shorter custom edge and remains valid after orientation changes', async ({ page }) => {
-  await page.goto('/'); await page.getByLabel('商品模板').selectOption('acrylic-block-v1');
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await page.getByLabel('商品尺寸').selectOption('custom');
   const length = page.getByLabel('長 (mm)', { exact: true }), height = page.getByLabel('高 (mm)', { exact: true }), thickness = page.getByLabel('厚 (mm)', { exact: true });
   await length.fill('80'); await height.fill('60'); await thickness.fill('50');
@@ -386,4 +386,98 @@ test('thickness follows the shorter custom edge and remains valid after orientat
   await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
   await expect(page.getByRole('slider', { name: '厚滑桿' })).toHaveAttribute('max', '20');
   await page.reload(); await expect(thickness).toHaveValue('20');
+});
+
+test('top product choices switch to editable badge sizes and preserve the draft', async ({ page }) => {
+  await page.goto('/');
+  const nav = page.getByRole('navigation', { name: '商品種類' });
+  await expect(nav.getByRole('button')).toHaveCount(3);
+  await expect(page.getByLabel('商品模板')).toHaveCount(0);
+  const badge = nav.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true });
+  await badge.click(); await expect(badge).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('商品尺寸')).toHaveValue('50x90');
+  await page.getByLabel('商品尺寸').selectOption('60x90');
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect(page.locator('.canvas-heading')).toContainText('90 × 60 mm');
+  await expect(page.getByLabel('商品尺寸').locator('option:checked')).toHaveText('加寬型 · 90 × 60 mm');
+  await upload(page);
+  await expect.poll(async () => (await draft(page)).design.sizeId).toBe('60x90');
+  await page.reload(); await expect(badge).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('壓克力識別牌預覽')).toBeVisible();
+  await expect(page.locator('.dimension-thickness')).toContainText('3 mm');
+  await page.getByLabel('商品尺寸').selectOption('80x80');
+  await expect(page.locator('.canvas-heading')).toContainText('80 × 80 mm');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/badge-mobile.png', fullPage: true });
+});
+
+test('badge lifestyle scenes and editable slot survive orientation and reload', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true }).click();
+  await page.getByRole('button', { name: '自訂長槽', exact: true }).click();
+  await page.getByLabel('開槽', { exact: true }).check();
+  await page.getByLabel('槽長 (mm)', { exact: true }).fill('18');
+  await page.getByLabel('槽寬 (mm)', { exact: true }).fill('4');
+  await expect.poll(async () => (await draft(page)).design.slot).toEqual({ enabled: true, widthMm: 18, heightMm: 4, shape: 'slot' });
+  await upload(page);
+  for (const scene of ['背包吊牌', '識別證配戴']) {
+    await page.getByRole('button', { name: scene, exact: true }).click();
+    await expect(page.getByLabel(scene + '照片融合預覽')).toBeVisible();
+    await expect.poll(async () => page.locator('.badge-lifestyle>img').first().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  }
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.orientation).toBe('landscape');
+  await page.reload(); await expect(page.getByLabel('槽長 (mm)', { exact: true })).toHaveValue('18');
+  await expect(page.locator('.dimension-thickness')).toContainText('3 mm');
+  await expect(page.locator('.badge-lifestyle')).toHaveAttribute('data-orientation', 'landscape');
+  await page.screenshot({ path: 'test-results/badge-lanyard-landscape.png', fullPage: true });
+  await page.getByRole('button', { name: '放大情境預覽', exact: false }).click();
+  await expect(page.getByRole('dialog', { name: '放大識別牌預覽' })).toBeVisible();
+  await page.getByRole('button', { name: '關閉', exact: true }).click();
+  await page.getByRole('button', { name: '背包吊牌', exact: true }).click();
+  await page.getByRole('button', { name: '切換為直式', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/badge-backpack-mobile.png', fullPage: true });
+});
+
+
+test('sidebar accessories apply exact holes and persist rounded corners', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true }).click();
+  const panel = page.getByRole('region', { name: '識別牌配件與孔槽' });
+  for (const [name, id, width, height, shape] of [['織帶扣', 'webbing', 34, 4, 'slot'], ['珠鍊', 'ball-chain', 3, 3, 'circle'], ['鑰匙圈', 'keyring', 3, 3, 'circle'], ['識別證掛繩', 'lanyard', 15, 3, 'slot'], ['皮繩掛扣', 'leather', 5, 5, 'circle'], ['原款掛扣', 'original', 5, 5, 'circle']] as const) {
+    await panel.getByRole('button', { name: new RegExp(name) }).click();
+    await expect.poll(async () => (await draft(page)).design.slot).toEqual({ enabled: true, widthMm: width, heightMm: height, shape, ...(shape === 'circle' ? { position: 'center' } : {}) });
+    await expect.poll(async () => (await draft(page)).design.badgeAccessory).toBe(id);
+  }
+  await page.getByRole('button', { name: 'R4 mm', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.badgeCornerRadiusMm).toBe(4);
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.orientation).toBe('landscape');
+  await page.reload(); await expect(panel.getByRole('button', { name: /原款掛扣/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'R4 mm', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel.getByRole('button', { name: /織帶扣/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/badge-accessories-mobile.png', fullPage: true });
+});
+
+test('round-hole position moves the attachment without drifting off the scene', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true }).click();
+  await page.getByRole('button', { name: /原款掛扣/ }).click();
+  await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.getByRole('button', { name: '透明壓克力', exact: true }).click();
+  const positions = page.getByRole('group', { name: '圓孔位置' });
+  const leftOffsets = [];
+  for (const [label, position] of [['左', 'left'], ['中', 'center'], ['右', 'right']] as const) {
+    await positions.getByRole('button', { name: label, exact: true }).click();
+    await expect.poll(async () => (await draft(page)).design.slot?.position).toBe(position);
+    leftOffsets.push(await page.locator('.badge-live-art').evaluate(el => parseFloat((el as HTMLElement).style.left)));
+  }
+  expect(leftOffsets[0]).toBeGreaterThan(leftOffsets[1]); expect(leftOffsets[1]).toBeGreaterThan(leftOffsets[2]);
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.orientation).toBe('landscape');
+  await page.reload(); await expect(positions.getByRole('button', { name: '右', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.screenshot({ path: 'test-results/clear-badge-right-hole.png', fullPage: true });
+  await page.getByRole('button', { name: /織帶扣/ }).click(); await expect(positions).toHaveCount(0);
 });

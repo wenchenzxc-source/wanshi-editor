@@ -6,7 +6,7 @@ import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import sharp from 'sharp';
 import { createApp } from '../server/app';
-import { emptyDesign, newLayer, dimensions, templates, type Asset } from '../shared/model';
+import { emptyDesign, newLayer, dimensions, templates, badgeAccessories, slotGeometry, type Asset } from '../shared/model';
 import { render } from '../server/render';
 import { Store } from '../server/store';
 
@@ -145,4 +145,76 @@ test('acrylic block restricts material, restores size and exports selected dimen
     assert.equal(customMeta.width, Math.round(80 / 25.4 * 300)); assert.equal(customMeta.height, Math.round(55 / 25.4 * 300));
 
   } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
+});
+
+test('acrylic badge preset outputs use the selected physical size without bleed', async () => {
+  const template = templates.find(t => t.id === 'acrylic-badge-v1')!;
+  assert.equal(template.bleedMm, 0); assert.equal(template.safeMm, 1);
+  for (const size of template.sizes!) for (const orientation of ['portrait', 'landscape'] as const) {
+    const d = { ...emptyDesign(template), sizeId: size.id, orientation };
+    const output = await render(d, template, [], new Store('unused'), 'production');
+    const meta = await sharp(output).metadata();
+    assert.equal(meta.width, Math.round((orientation === 'portrait' ? size.widthMm : size.heightMm) * 300 / 25.4));
+    assert.equal(meta.height, Math.round((orientation === 'portrait' ? size.heightMm : size.widthMm) * 300 / 25.4));
+  }
+});
+
+test('badge slots stay at the top and export transparent ink plus immutable cut geometry', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-slot-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  const cookie = (await fetch(url + '/session', { method: 'POST' })).headers.get('set-cookie')!.split(';')[0];
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  try {
+    const d = emptyDesign(templates.find(t => t.id === 'acrylic-badge-v1')!);
+    d.slot = { enabled: true, widthMm: 12, heightMm: 3 };
+    d.layers = [newLayer('shape', { shape: 'rect', x: 0, y: 0, width: 100, height: 100, fill: '#ff0000' }), newLayer('uv', { shape: 'rect', x: 0, y: 0, width: 100, height: 100 })];
+    assert.equal((await req('/designs', 'POST', d)).status, 201);
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, badgeAccessory: 'webbing' }, baseRevision: 1 })).status, 400);
+    for (const slot of [{ enabled: true, widthMm: 12.5, heightMm: 3 }, { enabled: true, widthMm: 49, heightMm: 3 }, { enabled: true, widthMm: 12, heightMm: 85 }]) assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, slot }, baseRevision: 1 })).status, 400);
+    let firstVersion = '', firstCut = '';
+    for (const [index, orientation] of (['portrait', 'landscape'] as const).entries()) {
+      d.orientation = orientation;
+      if (index) assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 })).status, 200);
+      const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: index + 1 })).json();
+      const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
+      const settings = JSON.parse(zip.get('manufacturing.json')!.toString());
+      assert.equal(settings.thicknessMm, 3); assert.equal(settings.slot.y, 5);
+      assert.equal(settings.slot.x, ((orientation === 'portrait' ? 50 : 90) - 12) / 2);
+      assert.match(zip.get('slot-cut-path.svg')!.toString(), /y="5"/);
+      const left = Math.round((settings.slot.x + 6) * 300 / 25.4), top = Math.round(6 * 300 / 25.4);
+      const ink = await sharp(zip.get('production-with-bleed.png')).ensureAlpha().extract({ left, top, width: 1, height: 1 }).raw().toBuffer();
+      assert.equal(ink[3], 0);
+      const corner = await sharp(zip.get('production-with-bleed.png')).ensureAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer(); assert.equal(corner[3], 0);
+      assert.match(zip.get('badge-cut-path.svg')!.toString(), /rx="3"/);
+      const mask = await sharp(zip.get('uv-mask.png')).extract({ left, top, width: 1, height: 1 }).raw().toBuffer(); assert.equal(mask[0], 0);
+      if (!index) { firstVersion = v.id; firstCut = zip.get('slot-cut-path.svg')!.toString(); }
+    }
+    const oldZip = unzip(Buffer.from(await (await req(`/versions/${firstVersion}/package.zip`)).arrayBuffer()));
+    assert.equal(oldZip.get('slot-cut-path.svg')!.toString(), firstCut);
+  } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
+});
+
+test('accessory hole shapes and R4 corners remove ink at their exact geometry', async () => {
+  const t = templates.find(t => t.id === 'acrylic-badge-v1')!;
+  for (const a of badgeAccessories) {
+    const d = { ...emptyDesign(t), badgeAccessory: a.id, badgeCornerRadiusMm: 4 as const, slot: { enabled: true, widthMm: a.widthMm, heightMm: a.heightMm, shape: a.shape }, layers: [newLayer('shape', { shape: 'rect' as const, x: 0, y: 0, width: 50, height: 90, fill: '#ff0000' })] };
+    const output = await render(d, t, [], new Store('unused'), 'production');
+    const sample = async (x: number, y: number) => (await sharp(output).ensureAlpha().extract({ left: Math.round(x * 300 / 25.4), top: Math.round(y * 300 / 25.4), width: 1, height: 1 }).raw().toBuffer())[3];
+    assert.equal(await sample(25, 5 + a.heightMm / 2), 0, a.id);
+    assert.equal(await sample(0, 0), 0);
+    assert.equal(await sample(4, 1), 255);
+    if (a.shape === 'circle') assert.equal(await sample((50 - a.widthMm) / 2 + 0.1, 5.1), 255, 'circle bounding-box corner keeps ink');
+  }
+});
+
+test('round holes follow left center right in the current orientation', async () => {
+  const t = templates.find(t => t.id === 'acrylic-badge-v1')!;
+  for (const orientation of ['portrait', 'landscape'] as const) for (const position of ['left', 'center', 'right'] as const) {
+    const d = { ...emptyDesign(t), orientation, slot: { enabled: true, shape: 'circle' as const, widthMm: 3, heightMm: 3, position }, layers: [newLayer('shape', { shape: 'rect', x: 0, y: 0, width: 100, height: 100 })] };
+    const slot = slotGeometry(d, t)!, w = orientation === 'portrait' ? 50 : 90;
+    assert.equal(slot.x, position === 'left' ? 5 : position === 'right' ? w - 8 : (w - 3) / 2); assert.equal(slot.y, 5);
+    const png = await render(d, t, [], new Store('unused'), 'production');
+    const pixel = await sharp(png).ensureAlpha().extract({ left: Math.round((slot.x + 1.5) * 300 / 25.4), top: Math.round(6.5 * 300 / 25.4), width: 1, height: 1 }).raw().toBuffer();
+    assert.equal(pixel[3], 0);
+  }
 });

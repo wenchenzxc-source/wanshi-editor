@@ -1,3 +1,4 @@
+import { BadgeScene } from './BadgeScene';
 import { useEffect, useState } from 'react';
 import { Preview } from './Canvas';
 import { PhotoScene, photoScenes, type PhotoSceneId } from './PhotoScene';
@@ -26,13 +27,14 @@ export function ProductScene({ design, template, images }: { design: Design; tem
   useEffect(() => { if (!expanded) return; const close = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, [expanded]);
   const standing = scene !== 'wall';
   useEffect(() => { try { localStorage.setItem('wanshi:preview-scene', scene); localStorage.setItem('wanshi:preview-finish', finish); } catch { /* Storage is optional for preview. */ } }, [scene, finish]);
+  if (template.presentation === 'acrylic-badge') return <BadgeScene design={design} template={template} images={images}/>;
   if (template.presentation === 'acrylic-block') {
     const { w, h } = dimensions(design, template);
     const worldW = Math.max(140, w + 115.6), worldH = Math.max(h, 54) + 55;
     const baseline = worldH - 35;
     const pct = (n: number, total: number) => `${n / total * 100}%`;
     return <section className="product-preview-panel" aria-label="透明壓克力磚預覽">
-      <div className="scene-control-label">透明壓克力磚 <span>長 {w} × 高 {h} mm · 厚 {template.thicknessMm ?? '未指定'} mm</span></div>
+      <div className="scene-control-label">{template.name} <span>長 {w} × 高 {h} mm{template.presentation === 'acrylic-block' && <> · 厚 {template.thicknessMm ?? '未指定'} mm</>}</span></div>
       <div className="block-scale-scene" style={{ aspectRatio: `${worldW} / ${worldH}` }}>
         <div className="scale-reference" aria-label="信用卡大小參照物，8.56 × 5.4 公分" style={{ left: pct(w + 20, worldW), top: pct(baseline - 54, worldH), width: pct(85.6, worldW), height: pct(54, worldH) }}>
           <svg viewBox="0 0 85.6 54" aria-hidden="true">

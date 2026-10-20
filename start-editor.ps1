@@ -2,7 +2,7 @@
 $editorRoot = $PSScriptRoot
 $editorUrl = 'http://127.0.0.1:4310/'
 function Test-Editor {
-    try { return (Invoke-RestMethod -Uri ($editorUrl + 'api/health') -TimeoutSec 2).apiVersion -eq 'acrylic-limits-v6' } catch { return $false }
+    try { return (Invoke-RestMethod -Uri ($editorUrl + 'api/health') -TimeoutSec 2).apiVersion -eq 'badge-position-v10' } catch { return $false }
 }
 if (-not (Test-Editor)) {
     $editorPortInUse = Get-NetTCPConnection -LocalPort 4310 -State Listen -ErrorAction SilentlyContinue

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { drawLayer, drawDesign, drawSubstrate } from '../shared/draw';
-import { dimensions, zones, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
+import { dimensions, zones, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
 
 export function useImages(assets: Asset[]) {
   const [images, setImages] = useState(new Map<string, HTMLImageElement>());
@@ -24,6 +24,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   const transformRef = useRef<Konva.Transformer>(null), nodes = useRef(new Map<string, Konva.Shape>());
   const [snapLines, setSnapLines] = useState<{ x?: number; y?: number }>({});
   const { w, h, fullW, fullH } = dimensions(design, template), b = template.bleedMm, pad = 12, requestedScale = 2.6 * zoom;
+  const slot = slotGeometry(design, template), radius = badgeRadius(design, template);
   const current = design.layers.find(l => l.id === selected);
   // Keep the product at the chosen zoom. Only the controls use a bounded proxy.
   const scale = requestedScale;
@@ -76,9 +77,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
     <Stage width={stageW} height={stageH} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
-        <Rect width={fullW} height={fullH} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
-        <Group clipX={0} clipY={0} clipWidth={fullW} clipHeight={fullH}>
-          <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH)} listening={false}/>
+        <Rect width={fullW} height={fullH} cornerRadius={radius} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
+        <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
+          <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
             {design.layers.map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled} listening={!disabled}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''))}
@@ -91,9 +92,10 @@ export function EditorCanvas({ design, template, images, selected, select, commi
             />)}
           </Group>
         </Group>
+        {slot && <Rect x={b + slot.x} y={b + slot.y} width={slot.width} height={slot.height} cornerRadius={slot.radius} fill="#dbe3db" stroke="#7a8e82" strokeWidth={0.25} onClick={() => select(null)} onTap={() => select(null)}/>}
         {guides && <Group listening={false}>
-          <Rect x={b} y={b} width={w} height={h} stroke="#b67b52" strokeWidth={0.35} dash={[2, 2]}/>
-          <Rect x={b + template.safeMm} y={b + template.safeMm} width={w - 2 * template.safeMm} height={h - 2 * template.safeMm} stroke="#438a80" strokeWidth={0.35} dash={[2, 2]}/>
+          <Rect x={b} y={b} width={w} height={h} cornerRadius={radius} stroke="#b67b52" strokeWidth={0.35} dash={[2, 2]}/>
+          <Rect x={b + template.safeMm} y={b + template.safeMm} width={w - 2 * template.safeMm} height={h - 2 * template.safeMm} cornerRadius={Math.max(0, radius - template.safeMm)} stroke="#438a80" strokeWidth={0.35} dash={[2, 2]}/>
           {zones(design, template).map((z, i) => <Rect key={i} x={b + z.x} y={b + z.y} width={z.width} height={z.height} fill="#e75d5d44" stroke="#cf4444" strokeWidth={0.4}/>)}
           {snapLines.x !== undefined && <Line points={[b + snapLines.x, 0, b + snapLines.x, fullH]} stroke="#df5a95" strokeWidth={0.45}/>}
           {snapLines.y !== undefined && <Line points={[0, b + snapLines.y, fullW, b + snapLines.y]} stroke="#df5a95" strokeWidth={0.45}/>}

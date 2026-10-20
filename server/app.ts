@@ -6,7 +6,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { designSchema, templates, resolveTemplate, type Design, type Template, type Asset } from '../shared/model';
+import { designSchema, templates, resolveTemplate, dimensions, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
 import { Store } from './store';
 import { fontPath, registerFont, render } from './render';
 import { fonts } from '../shared/fonts';
@@ -31,7 +31,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'acrylic-limits-v6' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'badge-position-v10' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (existing && await store.get('sessions', hash(existing))) return res.json({ ok: true });
@@ -61,6 +61,15 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (!(template.allowCustomSize && d.sizeId === 'custom') && (template.sizes?.length ? !template.sizes.some(s => s.id === d.sizeId) : d.sizeId !== undefined)) throw new HttpError(400, '請選擇有效的商品尺寸');
     const resolved = resolveTemplate(d, template);
     if (resolved.safeMm * 2 >= Math.min(resolved.widthMm, resolved.heightMm) || ((resolved.widthMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) * ((resolved.heightMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) > 40_000_000) throw new HttpError(400, '尺寸超過工作區或輸出限制');
+    if (d.slot?.enabled) {
+      if (template.presentation !== 'acrylic-badge') throw new HttpError(400, '此商品不支援開槽');
+      const preset = badgeAccessories.find(a => a.id === d.badgeAccessory);
+      if (preset && (d.slot.widthMm !== preset.widthMm || d.slot.heightMm !== preset.heightMm || d.slot.shape !== preset.shape)) throw new HttpError(400, '配件與孔槽規格不一致');
+      const slot = slotGeometry(d, resolved)!, size = dimensions(d, resolved);
+      if (slot.x < resolved.safeMm || slot.x + slot.width > size.w - resolved.safeMm || slot.y + slot.height > size.h - resolved.safeMm) throw new HttpError(400, '開槽超出成品安全範圍');
+    }
+    if (badgeAccessories.some(a => a.id === d.badgeAccessory) && !d.slot?.enabled) throw new HttpError(400, '所選配件需要開孔或開槽');
+    if (d.badgeAccessory === 'none' && d.slot?.enabled) throw new HttpError(400, '無配件款不可附帶孔槽');
     for (const l of d.layers) if (l.assetId) { const a = await ownedAsset(l.assetId, owner); if (a.designId !== d.id) throw new HttpError(400, '素材不屬於此設計'); }
   };
   app.get('/api/config', (_req, res) => res.json({ templates: catalog, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024 }));
@@ -178,7 +187,10 @@ export async function createApp(dataDir: string, options: { templates?: Template
       zip.file(store.file('files', `${v.id}-back-production`, 'png'), { name: 'back-production-with-bleed.png' });
       if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) zip.file(store.file('files', `${v.id}-back-mask`, 'png'), { name: 'back-uv-mask.png' });
     }
-    zip.append(JSON.stringify({ material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: v.template.widthMm, heightMm: v.template.heightMm, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
+    const slot = slotGeometry(v.design, v.template), physical = dimensions(v.design, v.template);
+    if (slot) zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/></svg>`, { name: 'slot-cut-path.svg' });
+    if (v.template.presentation === 'acrylic-badge') zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="0" y="0" width="${physical.w}" height="${physical.h}" rx="${badgeRadius(v.design, v.template)}" fill="none" stroke="#000000" stroke-width="0.1"/>${slot ? `<rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/>` : ''}</svg>`, { name: 'badge-cut-path.svg' });
+    zip.append(JSON.stringify({ badgeAccessory: v.design.badgeAccessory || null, cornerRadiusMm: badgeRadius(v.design, v.template), slot: slot ? { ...slot, units: 'mm', placement: `top-${v.design.slot?.shape === 'circle' ? v.design.slot.position || 'center' : 'center'}`, topOffsetMm: 5 } : null, material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: physical.w, heightMm: physical.h, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
     for (const a of v.assets) zip.file(store.file('files', a.id, 'bin'), { name: `${a.variant === 'original' ? 'originals' : 'cutouts'}/${a.id}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime.split('/')[1]}` });
     zip.append('原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 依 manifest.json 的模板出血設定輸出（出血為 0 時即成品大小）；final-preview.png 為成品與 UV 示意。安全線為排版提醒，不會自動裁切圖稿。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
     await zip.finalize();
