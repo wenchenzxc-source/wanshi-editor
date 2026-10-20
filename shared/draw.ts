@@ -1,5 +1,18 @@
-import { dimensions, type Design, type DesignLayer, type Template } from './model';
+import { dimensions, materials, type Design, type DesignLayer, type Template } from './model';
+export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number) {
+  ctx.save();
+  if (!d.material) { ctx.globalAlpha = d.backgroundOpacity; ctx.fillStyle = d.background; }
+  else if (d.material === 'clear') { ctx.fillStyle = 'rgba(215,235,240,0.16)'; }
+  else if (d.material === 'white' || d.material === 'black') ctx.fillStyle = materials[d.material].color;
+  else {
+    const g = ctx.createLinearGradient(0, 0, w, h);
+    const colors = d.material === 'iridescent' ? ['#b8dfeaaa','#f2c7ebaa','#e8e9b6aa','#b9e5d9aa'] : [materials[d.material].color, '#fff5e3', materials[d.material].color, '#777b80'];
+    colors.forEach((c, i) => g.addColorStop(i / (colors.length - 1), c)); ctx.fillStyle = g;
+  }
+  ctx.fillRect(0, 0, w, h); ctx.restore();
+}
 export type RenderMode = 'preview' | 'production' | 'mask';
+import { getFont } from './fonts';
 export const FONT = 'Wanshi Sans';
 export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview') {
   if (!l.visible || (mode === 'mask' && l.kind !== 'uv') || (mode === 'production' && l.kind === 'uv')) return;
@@ -9,7 +22,7 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
   if (l.kind === 'image' && image) ctx.drawImage(image, 0, 0, l.width, l.height);
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;
-    ctx.font = `${size}px "${FONT}"`; ctx.textBaseline = 'top';
+    ctx.font = `${size}px "${getFont(l.fontId).family}", "${FONT}"`; ctx.textBaseline = 'top';
     ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
     let y = 0;
     for (const paragraph of (l.text || '').split('\n')) {
@@ -36,8 +49,11 @@ export function drawDesign(ctx: CanvasRenderingContext2D, d: Design, t: Template
   const { w, h, fullW, fullH } = dimensions(d, t), b = bleed ? t.bleedMm : 0;
   ctx.save(); ctx.scale(scale, scale);
   if (mode === 'mask') { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, bleed ? fullW : w, bleed ? fullH : h); }
-  else { ctx.globalAlpha = d.backgroundOpacity; ctx.fillStyle = d.background; ctx.fillRect(0, 0, bleed ? fullW : w, bleed ? fullH : h); ctx.globalAlpha = 1; }
+  else if (mode === 'preview' || !d.material) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h);
   ctx.translate(b, b);
-  for (const l of d.layers) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode); ctx.restore(); }
+  for (const l of d.layers.filter(l => (l.face || 'front') === (!d.printStack && d.duplex ? d.activeFace || 'front' : 'front'))) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode); ctx.restore(); }
+  if (mode === 'preview' && d.printView === 'acrylic') {
+    const gloss = ctx.createLinearGradient(0, 0, w, h); gloss.addColorStop(0, '#ffffff55'); gloss.addColorStop(.45, '#ffffff08'); gloss.addColorStop(.5, '#ffffff35'); gloss.addColorStop(1, '#ffffff00'); ctx.fillStyle = gloss; ctx.fillRect(0, 0, w, h);
+  }
   ctx.restore();
 }

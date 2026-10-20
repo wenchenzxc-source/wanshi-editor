@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { drawDesign, FONT, type RenderMode } from '../shared/draw';
 import { dimensions, type Design, type Template, type Asset } from '../shared/model';
 import type { Store } from './store';
+import { fonts } from '../shared/fonts';
 export const fontPath = fileURLToPath(new URL('../public/fonts/NotoSansTC.ttf', import.meta.url));
-export function registerFont() { if (!GlobalFonts.registerFromPath(fontPath, FONT)) throw new Error('Missing bundled font: ' + path.basename(fontPath)); }
+export function registerFont() { for (const font of fonts) { const file = path.join(path.dirname(fontPath), font.file); if (!GlobalFonts.registerFromPath(file, font.family)) throw new Error('Missing bundled font: ' + font.file); } }
 export async function render(d: Design, t: Template, assets: Asset[], store: Store, mode: RenderMode, bleed = true) {
   const { w, h, fullW, fullH } = dimensions(d, t), scale = t.dpi / 25.4;
   const width = Math.round((bleed ? fullW : w) * scale), height = Math.round((bleed ? fullH : h) * scale);

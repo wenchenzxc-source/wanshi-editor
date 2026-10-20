@@ -31,7 +31,7 @@ test('private upload → editable draft → immutable confirmation → complete 
   try {
     assert.equal((await req('/designs')).status, 401);
     cookie = (await req('/session', 'POST')).headers.get('set-cookie')!.split(';')[0];
-    const d = emptyDesign(); assert.equal((await req('/designs', 'POST', d)).status, 201);
+    const d = emptyDesign(); delete d.printStack; assert.equal((await req('/designs', 'POST', d)).status, 201);
     const png = await sharp({ create: { width: 240, height: 160, channels: 4, background: '#ef3344' } }).png().toBuffer();
     const jpg = await sharp(png).jpeg().toBuffer(), webp = await sharp(png).webp().toBuffer();
     const form = new FormData();
@@ -41,7 +41,7 @@ test('private upload → editable draft → immutable confirmation → complete 
     assert.notEqual((await req(`/designs/${d.id}/assets`, 'POST', spoofed)).status, 201);
     assert.deepEqual(Buffer.from(await (await req(`/assets/${assets[0].id}?original=1`)).arrayBuffer()), png);
     assert.equal((await req(`/assets/${assets[0].id}/remove-background`, 'POST')).status, 503);
-    d.layers = [newLayer('image', { assetId: assets[0].id, x: 12.5, y: 30.25, width: 45, height: 30, rotation: 13.5 }), newLayer('text', { text: '中文測試\nHello', fontSize: 8, x: 20, y: 80, height: 40 }), newLayer('uv', { shape: 'circle', x: 50, y: 140, width: 20, height: 20, opacity: 0.5 })];
+    d.layers = [newLayer('image', { assetId: assets[0].id, x: 12.5, y: 30.25, width: 45, height: 30, rotation: 13.5 }), newLayer('text', { fontId: 'serif', text: '中文測試\nHello', fontSize: 8, x: 20, y: 80, height: 40 }), newLayer('uv', { shape: 'circle', x: 50, y: 140, width: 20, height: 20, opacity: 0.5 })];
     const save = await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 }); assert.equal(save.status, 200);
     assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 })).status, 409);
     assert.equal((await req(`/designs/${d.id}/confirm`, 'POST', { revision: 1 })).status, 409);
@@ -49,6 +49,7 @@ test('private upload → editable draft → immutable confirmation → complete 
     const confirm = await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 }); assert.equal(confirm.status, 201); const v = await confirm.json();
     const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
     assert.deepEqual(JSON.parse(zip.get('design.json')!.toString()), d);
+    assert.ok(zip.has('fonts/NotoSerifTC.ttf')); assert.ok(zip.has('fonts/NotoSerifTC-OFL.txt'));
     assert.deepEqual(zip.get(`originals/${assets[0].id}.png`), png);
     assert.deepEqual(zip.get(`originals/${assets[1].id}.jpg`), jpg);
     assert.deepEqual(zip.get(`originals/${assets[2].id}.webp`), webp);
@@ -58,6 +59,8 @@ test('private upload → editable draft → immutable confirmation → complete 
     const mask = await sharp(zip.get('uv-mask.png')).raw().toBuffer({ resolveWithObject: true });
     const px = Math.round(63 / 25.4 * 300), py = Math.round(153 / 25.4 * 300), gray = mask.data[(py * mask.info.width + px) * mask.info.channels]; assert.ok(gray >= 126 && gray <= 129); assert.equal(mask.data[0], 0);
     const originalVersion = await (await req(`/versions/${v.id}`)).json();
+    assert.equal((await req(`/assets/${assets[0].id}`, 'DELETE')).status, 200);
+    assert.ok((await (await req(`/designs/${d.id}`)).json()).assets[0].deletedAt || (await (await req(`/designs/${d.id}`)).json()).assets.some((a: Asset) => a.id === assets[0].id && a.deletedAt));
     d.layers[0].x = 92; d.orientation = 'landscape'; d.orderItemId = 'wc-item-777';
     assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 2 })).status, 200);
     assert.deepEqual(await (await req(`/versions/${v.id}`)).json(), originalVersion);
@@ -65,8 +68,27 @@ test('private upload → editable draft → immutable confirmation → complete 
     for (const [key, value] of zip) assert.deepEqual(zip2.get(key), value, `${key} must remain immutable`);
     const v2 = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 3 })).json();
     const landscape = await sharp(Buffer.from(await (await req(`/versions/${v2.id}/preview.png`)).arrayBuffer())).metadata(); assert.equal(landscape.width, preview.height); assert.equal(landscape.height, preview.width);
+    d.material = 'gold'; d.duplex = true;
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 3 })).status, 400);
+    d.material = 'clear'; d.activeFace = 'back';
+    d.layers.push(newLayer('shape', { face: 'back', shape: 'rect', fill: '#00ff00' }), newLayer('uv', { face: 'back' }));
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 3 })).status, 200);
+    const dual = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 4 })).json();
+    const dualZip = unzip(Buffer.from(await (await req(`/versions/${dual.id}/package.zip`)).arrayBuffer()));
+    assert.ok(dualZip.has('back-final-preview.png')); assert.ok(dualZip.has('back-uv-mask.png'));
+    const back = await sharp(dualZip.get('back-production-with-bleed.png')).raw().toBuffer();
+    assert.equal(back[3], 0, 'substrate must not be printed into blank ink pixels');
+    assert.notDeepEqual(dualZip.get('production-with-bleed.png'), dualZip.get('back-production-with-bleed.png'));
+    d.printStack = 'cmyk-white-cmyk'; d.activeFace = 'front';
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 4 })).status, 200);
+    const stackVersion = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 5 })).json();
+    const stackZip = unzip(Buffer.from(await (await req(`/versions/${stackVersion.id}/package.zip`)).arrayBuffer()));
+    assert.equal(stackZip.has('back-production-with-bleed.png'), false);
+    assert.equal(JSON.parse(stackZip.get('manufacturing.json')!.toString()).printStack, 'cmyk-white-cmyk');
+    assert.equal(JSON.parse(stackZip.get('design.json')!.toString()).layers.filter((l: any) => l.face === 'back').length, 2);
     const otherSession = await fetch(url + '/session', { method: 'POST' }); cookie = otherSession.headers.get('set-cookie')!.split(';')[0];
     for (const route of [`/designs/${d.id}`, `/assets/${assets[0].id}`, `/versions/${v.id}`, `/versions/${v.id}/package.zip`]) assert.equal((await req(route)).status, 404);
+    assert.equal((await req(`/assets/${assets[0].id}`, 'DELETE')).status, 404);
     const badOrigin = await fetch(url + '/session', { method: 'POST', headers: { Origin: 'https://evil.example' } }); assert.equal(badOrigin.status, 403);
   } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
 });
@@ -79,4 +101,48 @@ test('template dimensions and render use configurable bleed, DPI and safe areas'
   const meta = await sharp(output).metadata(); assert.equal(meta.width, Math.round(224 * 150 / 25.4)); assert.equal(meta.height, Math.round(162 * 150 / 25.4)); assert.equal(meta.density, 150);
   const sample = await sharp(output).extract({ left: Math.round(12 * 150 / 25.4), top: Math.round(37 * 150 / 25.4), width: 1, height: 1 }).raw().toBuffer();
   assert.equal(sample[0], 255); assert.equal(sample[1], 0); assert.equal(sample[2], 0);
+});
+
+
+test('acrylic block restricts material, restores size and exports selected dimensions', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-block-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  const cookie = (await fetch(url + '/session', { method: 'POST' })).headers.get('set-cookie')!.split(';')[0];
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  try {
+    const template = templates.find(t => t.id === 'acrylic-block-v1')!, d = emptyDesign(template);
+    assert.equal(template.bleedMm, 0); assert.equal(template.safeMm, 1); assert.equal(d.material, 'clear'); assert.equal((await req('/designs', 'POST', d)).status, 201);
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, material: 'gold' }, baseRevision: 1 })).status, 400);
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, sizeId: 'invalid' }, baseRevision: 1 })).status, 400);
+    d.sizeId = 'friend'; d.orientation = 'landscape';
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 })).status, 200);
+    assert.equal((await (await req(`/designs/${d.id}`)).json()).design.sizeId, 'friend');
+    for (const customSize of [
+      { widthMm: 20, heightMm: 50, thicknessMm: 25 },
+      { widthMm: 50, heightMm: 20, thicknessMm: 25 },
+      { widthMm: 15, heightMm: 20, thicknessMm: 5 },
+      { widthMm: 20, heightMm: 15, thicknessMm: 5 },
+      { widthMm: 20, heightMm: 20, thicknessMm: 0 },
+      { widthMm: 255, heightMm: 50, thicknessMm: 10 },
+      { widthMm: 50, heightMm: 255, thicknessMm: 10 },
+      { widthMm: 50, heightMm: 50, thicknessMm: 55 },
+      { widthMm: 51, heightMm: 50, thicknessMm: 10 },
+      { widthMm: 50, heightMm: 50, thicknessMm: 6 },
+    ]) assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, sizeId: 'custom', customSize }, baseRevision: 2 })).status, 400);
+    const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 })).json();
+    const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
+    const meta = await sharp(zip.get('production-with-bleed.png')).metadata();
+    assert.equal(meta.width, Math.round(50 / 25.4 * 300)); assert.equal(meta.height, Math.round(30 / 25.4 * 300));
+    assert.equal(JSON.parse(zip.get('manufacturing.json')!.toString()).thicknessMm, 10);
+    d.sizeId = 'custom'; d.customSize = { widthMm: 55, heightMm: 80, thicknessMm: 15 };
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, customSize: { ...d.customSize, thicknessMm: -1 } }, baseRevision: 2 })).status, 400);
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 2 })).status, 200);
+    const custom = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 3 })).json();
+    const customZip = unzip(Buffer.from(await (await req(`/versions/${custom.id}/package.zip`)).arrayBuffer()));
+    const settings = JSON.parse(customZip.get('manufacturing.json')!.toString());
+    assert.equal(settings.requiresQuote, true); assert.equal(settings.thicknessMm, 15);
+    const customMeta = await sharp(customZip.get('production-with-bleed.png')).metadata();
+    assert.equal(customMeta.width, Math.round(80 / 25.4 * 300)); assert.equal(customMeta.height, Math.round(55 / 25.4 * 300));
+
+  } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
 });

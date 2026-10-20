@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
-import { drawLayer, drawDesign } from '../shared/draw';
+import { drawLayer, drawDesign, drawSubstrate } from '../shared/draw';
 import { dimensions, zones, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
 
 export function useImages(assets: Asset[]) {
@@ -20,15 +20,45 @@ export function useImages(assets: Asset[]) {
 }
 type Props = { design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled }: Props) {
+  const proxyRef = useRef<Konva.Rect>(null);
   const transformRef = useRef<Konva.Transformer>(null), nodes = useRef(new Map<string, Konva.Shape>());
   const [snapLines, setSnapLines] = useState<{ x?: number; y?: number }>({});
-  const { w, h, fullW, fullH } = dimensions(design, template), b = template.bleedMm, pad = 12, scale = 2.6 * zoom;
+  const { w, h, fullW, fullH } = dimensions(design, template), b = template.bleedMm, pad = 12, requestedScale = 2.6 * zoom;
   const current = design.layers.find(l => l.id === selected);
+  // Keep the product at the chosen zoom. Only the controls use a bounded proxy.
+  const scale = requestedScale;
+  const angle = (current?.rotation || 0) * Math.PI / 180;
+  const corners = current ? [[0, 0], [current.width, 0], [0, current.height], [current.width, current.height]].map(([x, y]) => ({
+    x: b + current.x + x * Math.cos(angle) - y * Math.sin(angle),
+    y: b + current.y + x * Math.sin(angle) + y * Math.cos(angle),
+  })) : [];
+  const left = Math.min(...corners.map(p => p.x)), top = Math.min(...corners.map(p => p.y));
+  const right = Math.max(...corners.map(p => p.x)), bottom = Math.max(...corners.map(p => p.y));
+  const bounded = !!current && current.visible && !current.locked && (left < 0 || top < 0 || right > fullW || bottom > fullH);
+  const px = Math.max(0, Math.min(fullW - 1, left)), py = Math.max(0, Math.min(fullH - 1, top));
+  const pw = Math.max(1, Math.min(fullW, right) - px), ph = Math.max(1, Math.min(fullH, bottom) - py);
+  const stageW = (fullW + pad * 2) * scale, stageH = (fullH + pad * 2) * scale;
   useEffect(() => {
-    const node = selected ? nodes.current.get(selected) : null;
+    if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
+    const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
     transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, disabled, design]);
+  }, [selected, current, disabled, bounded, px, py, pw, ph]);
+  function transformProxy(done = false) {
+    const proxy = proxyRef.current;
+    if (!proxy || !current) return;
+    const ratio = proxy.scaleX(), rotation = proxy.rotation(), a = rotation * Math.PI / 180;
+    const dx = (b + current.x - px) * ratio, dy = (b + current.y - py) * ratio;
+    const next = { ...current, x: proxy.x() + dx * Math.cos(a) - dy * Math.sin(a) - b,
+      y: proxy.y() + dx * Math.sin(a) + dy * Math.cos(a) - b, width: current.width * ratio, height: current.height * ratio,
+      rotation: current.rotation + rotation, ...(current.kind === 'text' ? { fontSize: Math.max(1, (current.fontSize || 10) * ratio) } : {}) };
+    const node = nodes.current.get(current.id);
+    node?.setAttrs({ x: next.x, y: next.y, rotation: next.rotation, scaleX: ratio, scaleY: ratio });
+    if (done) {
+      node?.scale({ x: 1, y: 1 }); proxy.scale({ x: 1, y: 1 }); proxy.rotation(0);
+      commit(next); live(null);
+    } else live(next);
+  }
   function updated(l: DesignLayer, node: Konva.Node): DesignLayer {
     return { ...l, x: node.x(), y: node.y(), rotation: node.rotation(), width: Math.max(0.1, node.width() * node.scaleX()), height: Math.max(0.1, node.height() * node.scaleY()), ...(l.kind === 'text' ? { fontSize: Math.max(1, (l.fontSize || 10) * node.scaleX()) } : {}) };
   }
@@ -43,12 +73,12 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     if (Math.abs(sy.delta) < 5 / scale) { node.y(node.y() + sy.delta); lines.y = sy.v; }
     setSnapLines(lines);
   }
-  return <div className="canvas-scroll" data-testid="editor-canvas">
-    <Stage width={(fullW + pad * 2) * scale} height={(fullH + pad * 2) * scale} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
+  return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
+    <Stage width={stageW} height={stageH} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
         <Rect width={fullW} height={fullH} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
         <Group clipX={0} clipY={0} clipWidth={fullW} clipHeight={fullH}>
-          <Rect width={fullW} height={fullH} fill={design.background} opacity={design.backgroundOpacity} onMouseDown={() => select(null)} onTouchStart={() => select(null)}/>
+          <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH)} listening={false}/>
           <Group x={b} y={b}>
             {design.layers.map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled} listening={!disabled}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''))}
@@ -68,13 +98,15 @@ export function EditorCanvas({ design, template, images, selected, select, commi
           {snapLines.x !== undefined && <Line points={[b + snapLines.x, 0, b + snapLines.x, fullH]} stroke="#df5a95" strokeWidth={0.45}/>}
           {snapLines.y !== undefined && <Line points={[0, b + snapLines.y, fullW, b + snapLines.y]} stroke="#df5a95" strokeWidth={0.45}/>}
         </Group>}
+        {bounded && <Rect ref={proxyRef} x={px} y={py} width={pw} height={ph} listening={false} onTransform={() => transformProxy()} onTransformEnd={() => transformProxy(true)}/>}
         <Transformer ref={transformRef} flipEnabled={false} keepRatio={true} rotateAnchorOffset={26} anchorSize={12} anchorCornerRadius={3} borderStroke="#255f55" anchorStroke="#255f55" anchorFill="#ffffff" enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']} boundBoxFunc={(old, next) => Math.abs(next.width) < 8 || Math.abs(next.height) < 8 || Math.abs(next.width) > 2500 || Math.abs(next.height) > 2500 ? old : next}/>
       </Group></Layer>
     </Stage>
-  </div>;
+  </div>{bounded && <p className="selection-overview-note">控制框已限制在可見範圍；拖曳角落調整完整圖層，畫布縮放保持不變。</p>}</>;
 }
 export function Preview({ design, template, images }: Pick<Props, 'design' | 'template' | 'images'>) {
   const ref = useRef<HTMLCanvasElement>(null), { w, h } = dimensions(design, template), scale = 2.2;
   useEffect(() => { const ctx = ref.current?.getContext('2d'); if (ctx) { ctx.clearRect(0, 0, w * scale, h * scale); drawDesign(ctx, design, template, images, 'preview', scale, false); } }, [design, template, images, w, h]);
   return <canvas ref={ref} width={Math.round(w * scale)} height={Math.round(h * scale)} data-testid="product-preview" aria-label="同步成品預覽，不含編輯控制點"/>;
 }
+

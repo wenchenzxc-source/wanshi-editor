@@ -6,9 +6,10 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { designSchema, templates, type Design, type Template, type Asset } from '../shared/model';
+import { designSchema, templates, resolveTemplate, type Design, type Template, type Asset } from '../shared/model';
 import { Store } from './store';
 import { fontPath, registerFont, render } from './render';
+import { fonts } from '../shared/fonts';
 
 type PrivateAsset = Asset & { owner: string };
 type Draft = { owner: string; design: Design; revision: number; updatedAt: string };
@@ -30,6 +31,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'acrylic-limits-v6' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (existing && await store.get('sessions', hash(existing))) return res.json({ ok: true });
@@ -53,7 +55,12 @@ export async function createApp(dataDir: string, options: { templates?: Template
   };
   const assetsFor = async (id: string, owner: string) => (await store.list<PrivateAsset>('assets')).filter(a => a.owner === owner && a.designId === id).map(({ owner: _, ...a }) => a);
   const validateDesign = async (d: Design, owner: string) => {
-    if (!catalog.some(t => t.id === d.templateId)) throw new HttpError(400, '未知商品模板');
+    const template = catalog.find(t => t.id === d.templateId);
+    if (!template) throw new HttpError(400, '未知商品模板');
+    if (template.allowedMaterials && !template.allowedMaterials.includes(d.material!)) throw new HttpError(400, '此商品不支援所選底材');
+    if (!(template.allowCustomSize && d.sizeId === 'custom') && (template.sizes?.length ? !template.sizes.some(s => s.id === d.sizeId) : d.sizeId !== undefined)) throw new HttpError(400, '請選擇有效的商品尺寸');
+    const resolved = resolveTemplate(d, template);
+    if (resolved.safeMm * 2 >= Math.min(resolved.widthMm, resolved.heightMm) || ((resolved.widthMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) * ((resolved.heightMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) > 40_000_000) throw new HttpError(400, '尺寸超過工作區或輸出限制');
     for (const l of d.layers) if (l.assetId) { const a = await ownedAsset(l.assetId, owner); if (a.designId !== d.id) throw new HttpError(400, '素材不屬於此設計'); }
   };
   app.get('/api/config', (_req, res) => res.json({ templates: catalog, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024 }));
@@ -103,6 +110,14 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (req.query.original === '1') { res.type(a.mime); return res.sendFile(store.file('files', a.id, 'bin')); }
     res.type('png').send(await sharp(store.file('files', a.id, 'bin')).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).png().toBuffer());
   });
+  app.delete('/api/assets/:id', async (req, res) => {
+    await store.exclusive(`asset-${req.params.id}`, async () => {
+      const a = await ownedAsset(req.params.id, res.locals.owner);
+      const updated = { ...a, deletedAt: a.deletedAt || new Date().toISOString() };
+      await store.put('assets', a.id, updated);
+      const { owner: _, ...result } = updated; res.json(result);
+    });
+  });
   app.post('/api/assets/:id/remove-background', async (req, res) => {
     const a = await ownedAsset(req.params.id, res.locals.owner);
     if (!process.env.REMOVEBG_API_KEY) throw new HttpError(503, 'AI 去背未啟用：伺服器尚未設定 remove.bg API 金鑰');
@@ -111,7 +126,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (!upstream.ok) throw new HttpError(502, `去背服務失敗 (${upstream.status})，原圖已保留`);
     const raw = Buffer.from(await upstream.arrayBuffer());
     const bytes = await sharp(raw, { limitInputPixels: 40_000_000 }).png().toBuffer(), m = await sharp(bytes).metadata();
-    const cutout = { ...a, id: randomUUID(), mime: 'image/png', width: m.width!, height: m.height!, sha256: hash(bytes), sourceAssetId: a.id, variant: 'cutout' as const };
+    const cutout = { ...a, deletedAt: undefined, id: randomUUID(), mime: 'image/png', width: m.width!, height: m.height!, sha256: hash(bytes), sourceAssetId: a.id, variant: 'cutout' as const };
     await writeFile(store.file('files', cutout.id, 'bin'), bytes, { flag: 'wx' }); await store.put('assets', cutout.id, cutout, true);
     const { owner: _, ...result } = cutout; res.json(result);
   });
@@ -120,13 +135,21 @@ export async function createApp(dataDir: string, options: { templates?: Template
     await store.exclusive(req.params.id, async () => {
       const d = await owned(req.params.id, res.locals.owner);
       if (revision !== d.revision) throw new HttpError(409, '確認前請先儲存最新設計');
-      const v: Snapshot = { ...d, id: randomUUID(), createdAt: new Date().toISOString(), template: catalog.find(t => t.id === d.design.templateId)!, assets: await assetsFor(d.design.id, d.owner) };
+      const v: Snapshot = { ...d, id: randomUUID(), createdAt: new Date().toISOString(), template: resolveTemplate(d.design, catalog.find(t => t.id === d.design.templateId)!), assets: await assetsFor(d.design.id, d.owner) };
       // Persist actual output bytes at confirmation: later fonts/render changes cannot change an order.
-      const preview = await render(v.design, v.template, v.assets, store, 'preview', false);
-      const production = await render(v.design, v.template, v.assets, store, 'production');
+      const front = { ...v.design, activeFace: 'front' as const };
+      const preview = await render(front, v.template, v.assets, store, 'preview', false);
+      const production = await render(front, v.template, v.assets, store, 'production');
       await writeFile(store.file('files', `${v.id}-preview`, 'png'), preview, { flag: 'wx' });
       await writeFile(store.file('files', `${v.id}-production`, 'png'), production, { flag: 'wx' });
-      if (v.design.layers.some(l => l.kind === 'uv' && l.visible)) await writeFile(store.file('files', `${v.id}-mask`, 'png'), await render(v.design, v.template, v.assets, store, 'mask'), { flag: 'wx' });
+      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) await writeFile(store.file('files', `${v.id}-mask`, 'png'), await render(front, v.template, v.assets, store, 'mask'), { flag: 'wx' });
+      if (v.design.duplex && !v.design.printStack) {
+        const back = { ...v.design, activeFace: 'back' as const };
+        for (const mode of ['preview', 'production', 'mask'] as const) {
+          if (mode === 'mask' && !back.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) continue;
+          await writeFile(store.file('files', `${v.id}-back-${mode}`, 'png'), await render(back, v.template, v.assets, store, mode, mode !== 'preview'), { flag: 'wx' });
+        }
+      }
       await store.put('versions', v.id, v, true);
       res.status(201).json({ id: v.id, createdAt: v.createdAt, revision: v.revision, orderItemId: v.design.orderItemId });
     });
@@ -142,12 +165,22 @@ export async function createApp(dataDir: string, options: { templates?: Template
     res.attachment(`wanshi-${v.id}.zip`);
     const zip = archiver('zip', { zlib: { level: 6 } }); zip.on('error', e => res.destroy(e)); zip.pipe(res);
     zip.append(JSON.stringify(v.design, null, 2), { name: 'design.json' });
+    const usedFonts = fonts.filter(f => v.design.layers.some(l => l.kind === 'text' && (l.fontId || 'sans') === f.id));
+    zip.append(JSON.stringify(usedFonts, null, 2), { name: 'fonts/catalog.json' });
+    for (const font of usedFonts) zip.file(path.join(path.dirname(fontPath), font.file), { name: `fonts/${font.file}` });
+    for (const license of new Set(usedFonts.map(f => f.license))) zip.file(path.join(path.dirname(fontPath), license), { name: `fonts/${license}` });
     zip.append(JSON.stringify({ versionId: v.id, createdAt: v.createdAt, revision: v.revision, template: v.template, assets: v.assets, wooCommerceProductId: v.design.wooCommerceProductId, orderItemId: v.design.orderItemId, units: 'mm', origin: 'trim-top-left', uv: 'grayscale: black=none, white=full; preview is conceptual' }, null, 2), { name: 'manifest.json' });
     zip.file(store.file('files', `${v.id}-preview`, 'png'), { name: 'final-preview.png' });
     zip.file(store.file('files', `${v.id}-production`, 'png'), { name: 'production-with-bleed.png' });
-    if (v.design.layers.some(l => l.kind === 'uv' && l.visible)) zip.file(store.file('files', `${v.id}-mask`, 'png'), { name: 'uv-mask.png' });
+    if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) zip.file(store.file('files', `${v.id}-mask`, 'png'), { name: 'uv-mask.png' });
+    if (v.design.duplex && !v.design.printStack) {
+      zip.file(store.file('files', `${v.id}-back-preview`, 'png'), { name: 'back-final-preview.png' });
+      zip.file(store.file('files', `${v.id}-back-production`, 'png'), { name: 'back-production-with-bleed.png' });
+      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) zip.file(store.file('files', `${v.id}-back-mask`, 'png'), { name: 'back-uv-mask.png' });
+    }
+    zip.append(JSON.stringify({ material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: v.template.widthMm, heightMm: v.template.heightMm, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
     for (const a of v.assets) zip.file(store.file('files', a.id, 'bin'), { name: `${a.variant === 'original' ? 'originals' : 'cutouts'}/${a.id}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime.split('/')[1]}` });
-    zip.append('原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 含出血；final-preview.png 為裁切成品與 UV 示意。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
+    zip.append('原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 依 manifest.json 的模板出血設定輸出（出血為 0 時即成品大小）；final-preview.png 為成品與 UV 示意。安全線為排版提醒，不會自動裁切圖稿。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
     await zip.finalize();
   });
   app.use('/api', (_req, _res, next) => next(new HttpError(404, '找不到 API')));
@@ -161,3 +194,6 @@ export async function createApp(dataDir: string, options: { templates?: Template
   });
   return app;
 }
+
+
+

@@ -1,10 +1,12 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $editorRoot = $PSScriptRoot
 $editorUrl = 'http://127.0.0.1:4310/'
 function Test-Editor {
-    try { return (Invoke-WebRequest -Uri $editorUrl -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { return $false }
+    try { return (Invoke-RestMethod -Uri ($editorUrl + 'api/health') -TimeoutSec 2).apiVersion -eq 'acrylic-limits-v6' } catch { return $false }
 }
 if (-not (Test-Editor)) {
+    $editorPortInUse = Get-NetTCPConnection -LocalPort 4310 -State Listen -ErrorAction SilentlyContinue
+    if ($editorPortInUse) { throw 'Port 4310 is running an older or different server. Stop that editor server and run this script again. Your saved data is retained.' }
     $editorNodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
     $editorNode = if ($editorNodeCommand) { $editorNodeCommand.Source } else { Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' }
     if (-not (Test-Path -LiteralPath $editorNode)) { throw 'Node.js is required. Install Node.js 22.12 or later.' }
@@ -24,3 +26,5 @@ if (-not (Test-Editor)) {
 }
 Start-Process $editorUrl
 Write-Host "Editor ready: $editorUrl"
+
+

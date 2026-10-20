@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 export class Store {
@@ -14,8 +14,17 @@ export class Store {
   }
   async put(bucket: string, id: string, value: unknown, immutable = false) {
     if (immutable) { await writeFile(this.file(bucket, id), JSON.stringify(value), { flag: 'wx' }); return; }
-    const temp = this.file(bucket, `${id}-${randomUUID()}`);
-    await writeFile(temp, JSON.stringify(value)); await rename(temp, this.file(bucket, id));
+    const temp = this.file(bucket, `${id}-${randomUUID()}`, 'tmp');
+    await writeFile(temp, JSON.stringify(value));
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try { await rename(temp, this.file(bucket, id)); break; }
+        catch (error: any) {
+          if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 5) throw error;
+          await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
+        }
+      }
+    } finally { await unlink(temp).catch((e: any) => { if (e.code !== 'ENOENT') throw e; }); }
   }
   async list<T>(bucket: string): Promise<T[]> {
     const files = await readdir(path.join(this.root, bucket));
