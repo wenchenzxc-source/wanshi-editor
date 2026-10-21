@@ -1,3 +1,4 @@
+import { drawFloatingPetal } from './petals';
 import { dimensions, materials, slotGeometry, badgeRadius, photoImageArea, type Design, type DesignLayer, type Template } from './model';
 export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number, clearOpacity = 0.16) {
   ctx.save();
@@ -21,13 +22,28 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
   ctx.restore();
 }
 import { getFont } from './fonts';
+import { drawFrame } from './frame';
 export const FONT = 'Wanshi Sans';
 export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview') {
   if (!l.visible || (mode === 'mask' && l.kind !== 'uv') || (mode === 'production' && l.kind === 'uv')) return;
   ctx.save();
+  for (const hole of l.erasures || []) {
+    ctx.beginPath(); ctx.rect(-100000, -100000, 200000, 200000);
+    ctx.ellipse(hole.x * l.width, hole.y * l.height, hole.rx * l.width, hole.ry * l.height, 0, 0, Math.PI * 2);
+    ctx.clip('evenodd');
+  }
   ctx.globalAlpha = l.opacity;
   ctx.fillStyle = mode === 'mask' ? '#ffffff' : l.fill;
-  if (l.kind === 'image' && image) ctx.drawImage(image, 0, 0, l.width, l.height);
+  if (l.kind === 'stroke' && l.points) {
+    ctx.strokeStyle = l.fill; ctx.lineWidth = (l.brushRatio || .01) * Math.min(l.width, l.height); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(l.points[0] * l.width, l.points[1] * l.height);
+    for (let i = 2; i < l.points.length; i += 2) ctx.lineTo(l.points[i] * l.width, l.points[i + 1] * l.height);
+    ctx.stroke();
+    if (l.points.every((v, i) => v === l.points![i % 2])) { ctx.beginPath(); ctx.arc(l.points[0] * l.width, l.points[1] * l.height, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill(); }
+  }
+  else if (l.kind === 'shape' && l.petalPose) drawFloatingPetal(ctx, l);
+  else if (l.kind === 'frame') drawFrame(ctx, l);
+  else if (l.kind === 'image' && image) ctx.drawImage(image, 0, 0, l.width, l.height);
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;
     ctx.font = `${size}px "${getFont(l.fontId).family}", "${FONT}"`; ctx.textBaseline = 'top';

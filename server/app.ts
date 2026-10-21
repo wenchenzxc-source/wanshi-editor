@@ -6,10 +6,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { designSchema, templates, resolveTemplate, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
+import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
 import { Store } from './store';
 import { fontPath, registerFont, render } from './render';
 import { fonts } from '../shared/fonts';
+import { artCatalog } from '../shared/artwork';
 
 type PrivateAsset = Asset & { owner: string };
 type Draft = { owner: string; design: Design; revision: number; updatedAt: string };
@@ -31,7 +32,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'photo-border-v12' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'eraser-v16' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (existing && await store.get('sessions', hash(existing))) return res.json({ ok: true });
@@ -63,6 +64,8 @@ export async function createApp(dataDir: string, options: { templates?: Template
     } else if (d.photoHolder) throw new HttpError(400, '此商品不支援照片框選配');
     if (template.allowedMaterials && !template.allowedMaterials.includes(d.material!)) throw new HttpError(400, '此商品不支援所選底材');
     if (!(template.allowCustomSize && d.sizeId === 'custom') && (template.sizes?.length ? !template.sizes.some(s => s.id === d.sizeId) : d.sizeId !== undefined)) throw new HttpError(400, '請選擇有效的商品尺寸');
+    const normalized = fitFrames(d, template);
+    if (d.layers.some((l, i) => l.kind === 'frame' && JSON.stringify(l) !== JSON.stringify(normalized.layers[i]))) throw new HttpError(400, '圖框必須貼合版面且鎖定');
     const resolved = resolveTemplate(d, template);
     if (resolved.safeMm * 2 >= Math.min(resolved.widthMm, resolved.heightMm) || ((resolved.widthMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) * ((resolved.heightMm + resolved.bleedMm * 2) * resolved.dpi / 25.4) > 40_000_000) throw new HttpError(400, '尺寸超過工作區或輸出限制');
     if (d.slot?.enabled) {
@@ -173,6 +176,48 @@ export async function createApp(dataDir: string, options: { templates?: Template
     const v = await store.get<Snapshot>('versions', idSchema.parse(id));
     if (!v || v.owner !== owner) throw new HttpError(404, '找不到確認版本'); return v;
   };
+  type CartItem = { id: string; versionId: string; quantity: number; addedAt: string };
+  const getCart = async (owner: string) => await store.get<CartItem[]>('carts', owner) || [];
+  app.get('/api/cart', async (_req, res) => {
+    const items = await getCart(res.locals.owner);
+    res.json(await Promise.all(items.map(async item => { const v = await snapshot(item.versionId, res.locals.owner); return { ...item, name: v.design.name, product: v.template.name, designId: v.design.id, dimensions: dimensions(v.design, v.template), photoHolder: v.design.photoHolder, wooCommerceProductId: v.design.wooCommerceProductId, orderItemId: v.design.orderItemId }; })));
+  });
+  app.post('/api/cart', async (req, res) => {
+    const { versionId } = z.object({ versionId: idSchema }).parse(req.body);
+    await snapshot(versionId, res.locals.owner);
+    const item = await store.exclusive(`cart-${res.locals.owner}`, async () => {
+      const items = await getCart(res.locals.owner), existing = items.find(i => i.versionId === versionId);
+      if (existing) return existing; // Safe retry: one item per confirmed version.
+      const next = { id: randomUUID(), versionId, quantity: 1, addedAt: new Date().toISOString() };
+      items.push(next); await store.put('carts', res.locals.owner, items); return next;
+    }); res.status(201).json(item);
+  });
+  app.patch('/api/cart/:id', async (req, res) => {
+    const id = idSchema.parse(req.params.id), { quantity } = z.object({ quantity: z.number().int().min(0).max(99) }).parse(req.body);
+    await store.exclusive(`cart-${res.locals.owner}`, async () => {
+      const items = await getCart(res.locals.owner), item = items.find(i => i.id === id);
+      if (!item) throw new HttpError(404, '找不到購物車商品');
+      item.quantity = quantity; await store.put('carts', res.locals.owner, items.filter(i => i.quantity > 0));
+    }); res.json({ ok: true });
+  });
+  app.get('/api/library/:file', (req, res) => {
+    const artwork = artCatalog.find(a => `${a.id}.svg` === req.params.file);
+    if (!artwork?.svg) throw new HttpError(404, '找不到素材');
+    res.type('svg').send(artwork.svg);
+  });
+  app.post('/api/designs/:id/library', async (req, res) => {
+    const draft = await owned(req.params.id, res.locals.owner);
+    const { artworkId } = z.object({ artworkId: z.string() }).parse(req.body);
+    const artwork = artCatalog.find(a => a.id === artworkId);
+    if (!artwork) throw new HttpError(404, '找不到素材');
+    if (artwork.category === '圖框') throw new HttpError(400, '請以套用圖框加入版面');
+    const buffer = artwork.file ? await readFile(path.resolve('public/artwork', artwork.file)) : await sharp(Buffer.from(artwork.svg!)).resize(1600, 1600).png().toBuffer();
+    const metadata = await sharp(buffer).metadata();
+    const asset: PrivateAsset = { id: randomUUID(), designId: draft.design.id, owner: res.locals.owner, libraryArtworkId: artwork.id, originalName: `${artwork.name}.png`, mime: 'image/png', width: metadata.width!, height: metadata.height!, sha256: hash(buffer), variant: 'original' };
+    await writeFile(store.file('files', asset.id, 'bin'), buffer, { flag: 'wx' });
+    await store.put('assets', asset.id, asset, true);
+    const { owner: _, ...publicAsset } = asset; res.status(201).json(publicAsset);
+  });
   app.get('/api/versions/:id', async (req, res) => { const { owner: _, ...v } = await snapshot(req.params.id, res.locals.owner); res.json(v); });
   app.get('/api/versions/:id/preview.png', async (req, res) => { const v = await snapshot(req.params.id, res.locals.owner); res.type('png').sendFile(store.file('files', `${v.id}-preview`, 'png')); });
   app.get('/api/versions/:id/package.zip', async (req, res) => {
@@ -180,6 +225,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     res.attachment(`wanshi-${v.id}.zip`);
     const zip = archiver('zip', { zlib: { level: 6 } }); zip.on('error', e => res.destroy(e)); zip.pipe(res);
     zip.append(JSON.stringify(v.design, null, 2), { name: 'design.json' });
+    if ((v.assets.some(a => a.libraryArtworkId) || v.design.layers.some(l => l.kind === 'frame'))) zip.append('萬事造物素材：包含原創向量及 AI 生成透明花材，可用於本工作室及客戶的設計、修改與商品製作；不宣稱排他權利。素材 ID 與原圖 SHA-256 見 manifest.json。', { name: 'artwork-license.txt' });
     const usedFonts = fonts.filter(f => v.design.layers.some(l => l.kind === 'text' && (l.fontId || 'sans') === f.id));
     zip.append(JSON.stringify(usedFonts, null, 2), { name: 'fonts/catalog.json' });
     for (const font of usedFonts) zip.file(path.join(path.dirname(fontPath), font.file), { name: `fonts/${font.file}` });

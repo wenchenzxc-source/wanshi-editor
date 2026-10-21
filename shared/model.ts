@@ -6,7 +6,13 @@ export const materials = { clear: { name: '透明壓克力', color: '#ecf4f5' },
 export type Material = keyof typeof materials;
 export const supportsDuplex = (material?: Material) => material === 'clear' || material === 'iridescent';
 export const layerSchema = z.object({
-  id: z.string().uuid(), name: z.string().max(160), kind: z.enum(['image', 'text', 'shape', 'uv']),
+  id: z.string().uuid(), name: z.string().max(160), kind: z.enum(['image', 'text', 'shape', 'uv', 'frame', 'stroke']),
+  points: z.array(z.number().min(0).max(1)).min(4).max(12000).optional(),
+  erasures: z.array(z.object({ x: z.number().min(-1000).max(1000), y: z.number().min(-1000).max(1000), rx: z.number().positive().max(1000), ry: z.number().positive().max(1000) })).max(6000).optional(),
+  petalPose: z.enum(['open', 'tilted', 'edge', 'curled']).optional(),
+  flowerType: z.enum(['sakura', 'rose']).optional(),
+  brushRatio: z.number().positive().max(1).optional(),
+  frameId: z.enum(['halloween-frame', 'starlight-frame', 'petal-frame']).optional(),
   x: z.number().min(-1000).max(1000), y: z.number().min(-1000).max(1000),
   width: z.number().min(0.1).max(1000), height: z.number().min(0.1).max(1000),
   rotation: z.number().min(-36000).max(36000), opacity: z.number().min(0).max(1),
@@ -17,7 +23,9 @@ export const layerSchema = z.object({
   fontId: z.enum(fontIds).optional(),
   shape: z.enum(['petal', 'star', 'circle', 'rect']).optional(),
 }).superRefine((l, ctx) => {
+  if (l.kind === 'stroke' && (!l.points || l.points.length % 2 || !l.brushRatio)) ctx.addIssue({ code: 'custom', message: '筆畫資料不完整' });
   if (l.kind === 'image' && !l.assetId) ctx.addIssue({ code: 'custom', message: '圖片缺少素材 ID' });
+  if (l.kind === 'frame' && !l.frameId) ctx.addIssue({ code: 'custom', message: '圖框缺少樣式' });
 });
 export const designSchema = z.object({
   schemaVersion: z.literal(1), id: z.string().uuid(), name: z.string().min(1).max(160),
@@ -65,7 +73,7 @@ export function resolveTemplate(d: Pick<Design, 'sizeId' | 'customSize'>, t: Tem
   const size = t.sizes?.find(s => s.id === d.sizeId) || t.sizes?.[0];
   return size ? { ...t, widthMm: size.widthMm, heightMm: size.heightMm, thicknessMm: size.thicknessMm ?? t.thicknessMm } : t;
 }
-export type Asset = { deletedAt?: string; id: string; designId: string; originalName: string; mime: string; width: number; height: number; sha256: string; sourceAssetId?: string; variant: 'original' | 'cutout' };
+export type Asset = { libraryArtworkId?: string; deletedAt?: string; id: string; designId: string; originalName: string; mime: string; width: number; height: number; sha256: string; sourceAssetId?: string; variant: 'original' | 'cutout' };
 export type VersionInfo = { id: string; createdAt: string; revision: number; orderItemId: string | null };
 export const templates: Template[] = [{ id: 'a5-plaque-v1', name: 'A5 飾牌', version: 1, widthMm: 148, heightMm: 210, bleedMm: 3, safeMm: 5, dpi: 300, noProcess: [] }, { id: 'acrylic-block-v1', name: '壓克力磚', version: 3, allowCustomSize: true, presentation: 'acrylic-block', widthMm: 100, heightMm: 100, bleedMm: 0, safeMm: 1, dpi: 300, noProcess: [], allowedMaterials: ['clear'], sizes: [
   { id: 'mini-friend', name: '迷你飯友 · 30 × 20 × 5 mm', widthMm: 20, heightMm: 30, thicknessMm: 5 },
@@ -128,4 +136,10 @@ export function photoImageArea(d: Design, t: Template) {
     : d.photoHolder?.paperLayout === 'border' ? { x: 4, y: 7, width: paper.widthMm - 8, height: paper.heightMm - 24 }
     : { x: 0, y: 0, width: paper.widthMm, height: paper.heightMm };
   return d.orientation === 'portrait' ? area : { x: paper.heightMm - area.y - area.height, y: area.x, width: area.height, height: area.width };
+}
+
+export function fitFrames(d: Design, t: Template): Design {
+  const { w, h } = dimensions(d, t);
+  const area = photoImageArea(d, t) || { x: t.safeMm, y: t.safeMm, width: w - 2 * t.safeMm, height: h - 2 * t.safeMm };
+  return { ...d, layers: d.layers.map(l => l.kind !== 'frame' ? l : { ...l, ...area, rotation: 0, locked: true }) };
 }

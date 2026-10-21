@@ -12,7 +12,7 @@ async function upload(page: Page) {
 test('real canvas transforms, live preview, restore, layers and immutable package', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.setViewportSize({ width: 1500, height: 1100 }); await page.goto('/');
-  await expect(page.getByRole('heading', { name: '把靈感，變成實物。' })).toBeVisible(); await upload(page);
+  await expect(page.getByRole('heading', { name: '讓喜歡的畫面，成為日常。' })).toBeVisible(); await upload(page);
   await expect(page.getByRole('button', { name: 'AI 去背未啟用' })).toBeDisabled();
   await page.getByRole('button', { name: '收合圖層' }).click();
   const before = await draft(page), box = await page.locator('[data-testid="editor-canvas"] canvas').boundingBox();
@@ -49,10 +49,10 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(3);
   await page.getByRole('button', { name: '刪除', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
-  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.getByRole('button', { name: /加入 UV 花瓣效果/ }).click();
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.getByText('基本形狀與 UV 效果', { exact: true }).click(); await page.getByRole('button', { name: /加入 UV 花瓣效果/ }).click();
   await page.getByRole('button', { name: '文字', exact: true }).click(); await page.getByRole('button', { name: '加入標題', exact: true }).click();
   await page.getByLabel('文字內容').fill('春日紀念\n屬於你的美好');
-  await page.getByRole('button', { name: /確認與輸出/ }).click(); await page.getByRole('button', { name: '確認並建立製作包' }).click();
+  await page.getByRole('button', { name: /確認設計與加入購物車/ }).click(); await page.getByRole('button', { name: '僅儲存確認版本' }).click();
   await expect(page.getByRole('link', { name: '下載完整製作包 ↓' })).toBeVisible();
   const version = (await draft(page)).versions[0];
   const snapshot = await (await page.request.get(`/api/versions/${version.id}`)).json();
@@ -65,7 +65,7 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
 });
 test('mobile touch moves a layer and restores it after reload', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 }); const page = await context.newPage();
-  await page.goto('/'); await expect(page.getByRole('heading', { name: '把靈感，變成實物。' })).toBeVisible(); await upload(page);
+  await page.goto('/'); await expect(page.getByRole('heading', { name: '讓喜歡的畫面，成為日常。' })).toBeVisible(); await upload(page);
   await page.getByRole('button', { name: '符合', exact: true }).click(); await page.getByTestId('editor-canvas').scrollIntoViewIfNeeded();
   const box = await page.locator('[data-testid="editor-canvas"] canvas').boundingBox(); const scale = box!.width / (154 + 24);
   const x = box!.x + (15 + 47) * scale, y = box!.y + (15 + 52) * scale;
@@ -223,7 +223,7 @@ test('custom acrylic dimensions and quotation notice survive reload', async ({ p
   await expect(page.getByText('其他尺寸需另外報價', { exact: true })).toBeVisible();
   await page.reload(); await expect(page.getByLabel('商品尺寸')).toHaveValue('custom');
   await expect(page.getByLabel('厚 (mm)', { exact: true })).toHaveValue('15');
-  await page.getByRole('button', { name: /確認與輸出/ }).click();
+  await page.getByRole('button', { name: /確認設計與加入購物車/ }).click();
   await expect(page.getByRole('dialog')).toContainText('需另外報價');
   await page.getByRole('button', { name: '繼續編輯' }).click();
   await page.screenshot({ path: 'test-results/custom-acrylic.png', fullPage: true });
@@ -558,4 +558,56 @@ test('photo paper full bleed and border choices persist with one preview', async
   await layouts.getByRole('button', { name: '滿版', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.photoHolder?.paperLayout).toBe('full');
   await expect(page.locator('.holder-scene')).toHaveCount(1);
+});
+
+test('redesigned studio adds categorized artwork and keeps confirmed items in cart', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1050 }); await page.goto('/');
+  await page.getByRole('button', { name: '素材', exact: true }).click();
+  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '萬聖節', exact: true }).click();
+  await page.getByRole('button', { name: '角落蜘蛛網', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
+  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '光影星芒', exact: true }).click();
+  await page.getByRole('button', { name: '暖光星芒', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
+  await page.screenshot({ path: 'test-results/studio-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: '確認設計與加入購物車 ↗', exact: true }).click();
+  await page.getByRole('button', { name: '確認並加入購物車', exact: true }).click();
+  const cart = page.getByRole('dialog', { name: '購物車', exact: true }); await expect(cart).toBeVisible();
+  await expect(cart.locator('.cart-item')).toHaveCount(1);
+  await cart.getByRole('button', { name: '增加 A5 飾牌 數量' }).click();
+  await expect(cart.getByLabel('A5 飾牌 數量', { exact: true })).toHaveText('2');
+  await page.screenshot({ path: 'test-results/cart-desktop.png', fullPage: true });
+  await cart.getByRole('button', { name: '繼續設計' }).click(); await page.reload();
+  await page.getByRole('button', { name: '購物車 2', exact: true }).click(); await expect(cart.locator('.cart-item')).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/cart-mobile.png', fullPage: true });
+  await cart.getByRole('button', { name: '移除', exact: true }).click(); await expect(cart.locator('.cart-item')).toHaveCount(0);
+});
+
+test('fitted frames follow the printable page while natural flowers remain editable', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1050 }); await page.goto('/');
+  await page.getByRole('button', { name: '素材', exact: true }).click();
+  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '花瓣', exact: true }).click();
+  await page.getByRole('button', { name: '淡櫻花枝', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
+  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '圖框', exact: true }).click();
+  await page.getByRole('button', { name: /蛛網相框/ }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.height).toBe(200);
+  let frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame');
+  expect(frame).toMatchObject({ x: 5, y: 5, width: 138, height: 200, locked: true, rotation: 0 });
+  await expect(page.getByText('圖框自動貼合版面', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(200);
+  await page.reload(); expect((await draft(page)).design.layers.filter((l: any) => l.kind === 'frame')).toHaveLength(1);
+  await page.getByRole('button', { name: '素材', exact: true }).click();
+  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '圖框', exact: true }).click();
+  await page.getByRole('button', { name: /星光相框/ }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.frameId).toBe('starlight-frame');
+  expect((await draft(page)).design.layers).toHaveLength(2);
+  await page.screenshot({ path: 'test-results/natural-flowers-fitted-frame.png', fullPage: true });
+  await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
+  await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /拍立得/ }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(62);
+  frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame'); expect(frame).toMatchObject({ x: 17, y: 4, width: 62, height: 46 });
 });

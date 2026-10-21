@@ -1,8 +1,10 @@
+import { eraseLayers } from '../shared/eraser';
+import { scatterPetals } from '../shared/petals';
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { drawLayer, drawDesign, drawSubstrate, drawPhotoBorder } from '../shared/draw';
-import { dimensions, zones, photoImageArea, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
+import { newLayer, dimensions, zones, photoImageArea, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
 
 export function useImages(assets: Asset[]) {
   const [images, setImages] = useState(new Map<string, HTMLImageElement>());
@@ -18,8 +20,17 @@ export function useImages(assets: Asset[]) {
   }, [assets]); // Loaded assets are immutable; only load when inventory changes.
   return { images, failed };
 }
-type Props = { design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
-export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled }: Props) {
+export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number };
+type Props = { replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
+export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers }: Props) {
+  const [erased, setErased] = useState<DesignLayer[] | null>(null);
+  const drawing = useRef<number[]>([]);
+  const [ink, setInk] = useState<DesignLayer | null>(null);
+  function stroke(points: number[]) {
+    const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1), r = paint!.size / 2;
+    const x = Math.min(...xs) - r, y = Math.min(...ys) - r, width = Math.max(...xs) - x + r, height = Math.max(...ys) - y + r;
+    return newLayer('stroke', { name: '自由筆畫', x, y, width, height, fill: paint!.color, opacity: paint!.opacity, brushRatio: paint!.size / Math.min(width, height), points: points.map((n, i) => (n - (i % 2 ? y : x)) / (i % 2 ? height : width)) });
+  }
   const photoArea = photoImageArea(design, template);
   const proxyRef = useRef<Konva.Rect>(null);
   const transformRef = useRef<Konva.Transformer>(null), nodes = useRef(new Map<string, Konva.Shape>());
@@ -43,9 +54,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   useEffect(() => {
     if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
     const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
-    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled ? [node] : []);
+    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, disabled, bounded, px, py, pw, ph]);
+  }, [selected, current, disabled, paint, bounded, px, py, pw, ph]);
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
@@ -76,13 +87,13 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     setSnapLines(lines);
   }
   return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
-    <Stage width={stageW} height={stageH} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
+    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
         <Rect width={fullW} height={fullH} cornerRadius={radius} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
         <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
           <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
-            {design.layers.map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled} listening={!disabled}
+            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled && !paint} listening={!disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''))}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
               onClick={() => select(l.id)} onTap={() => select(l.id)} onDragStart={() => select(l.id)}
@@ -91,6 +102,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
               onTransform={() => live(updated(l, nodes.current.get(l.id)!))}
               onTransformEnd={() => { const node = nodes.current.get(l.id)!; const next = updated(l, node); node.scale({ x: 1, y: 1 }); commit(next); live(null); }}
             />)}
+            {ink && <Shape x={ink.x} y={ink.y} listening={false} sceneFunc={ctx => drawLayer(ctx._context, ink)}/>}
             <Shape listening={false} sceneFunc={ctx => drawPhotoBorder(ctx._context, design, template)}/>
           </Group>
         </Group>
@@ -106,6 +118,23 @@ export function EditorCanvas({ design, template, images, selected, select, commi
         <Transformer ref={transformRef} flipEnabled={false} keepRatio={true} rotateAnchorOffset={26} anchorSize={12} anchorCornerRadius={3} borderStroke="#255f55" anchorStroke="#255f55" anchorFill="#ffffff" enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']} boundBoxFunc={(old, next) => Math.abs(next.width) < 8 || Math.abs(next.height) < 8 || Math.abs(next.width) > 2500 || Math.abs(next.height) > 2500 ? old : next}/>
       </Group></Layer>
     </Stage>
+    {paint && !disabled && <div aria-label="繪畫區" style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'crosshair' }}
+      onPointerDown={e => {
+        const rect = e.currentTarget.getBoundingClientRect(), x = (e.clientX - rect.left) / scale - pad - b, y = (e.clientY - rect.top) / scale - pad - b;
+        if (x < 0 || y < 0 || x > w || y > h) return;
+        select(null); e.currentTarget.setPointerCapture(e.pointerId);
+        if (paint.mode === 'petals') { createBatch(scatterPetals(x, y, Math.min(w, paint.size * 6), Math.min(h, paint.size * 7), paint.size, paint.count || 6, paint.flowerType || 'sakura', paint.opacity, w, h)); return; }
+        if (paint.mode === 'stamp') { if (paint.assetId) create(newLayer('image', { name: '花瓣印章', assetId: paint.assetId, x: x - paint.size / 2, y: y - paint.size / 2, width: paint.size, height: paint.size, rotation: paint.rotation, opacity: paint.opacity })); return; }
+        drawing.current = [x, y, x, y]; if (paint.mode === 'eraser') setErased(eraseLayers(design.layers, drawing.current, paint.size)); else setInk(stroke(drawing.current));
+      }}
+      onPointerMove={e => {
+        if (!drawing.current.length || drawing.current.length >= 12000) return;
+        const rect = e.currentTarget.getBoundingClientRect(), x = Math.max(0, Math.min(w, (e.clientX - rect.left) / scale - pad - b)), y = Math.max(0, Math.min(h, (e.clientY - rect.top) / scale - pad - b));
+        drawing.current.push(x, y); if (paint.mode === 'eraser') setErased(eraseLayers(design.layers, drawing.current, paint.size)); else setInk(stroke(drawing.current));
+      }}
+      onPointerUp={() => { if (drawing.current.length) { if (paint.mode === 'eraser') replaceLayers(eraseLayers(design.layers, drawing.current, paint.size)); else create(stroke(drawing.current)); } drawing.current = []; setInk(null); setErased(null); }}
+      onPointerCancel={() => { drawing.current = []; setInk(null); setErased(null); }} />}
+    </div>
   </div>{bounded && <p className="selection-overview-note">控制框已限制在可見範圍；拖曳角落調整完整圖層，畫布縮放保持不變。</p>}</>;
 }
 export function Preview({ design, template, images }: Pick<Props, 'design' | 'template' | 'images'>) {

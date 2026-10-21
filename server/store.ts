@@ -7,7 +7,7 @@ export class Store {
     if (!/^[a-z-]+$/.test(bucket) || !/^[a-zA-Z0-9-]+$/.test(id) || !/^[a-z]+$/.test(ext)) throw new Error('Invalid storage key');
     return path.join(this.root, bucket, `${id}.${ext}`);
   }
-  async init() { for (const b of ['drafts', 'versions', 'assets', 'files', 'sessions']) await mkdir(path.join(this.root, b), { recursive: true }); }
+  async init() { for (const b of ['drafts', 'versions', 'assets', 'files', 'sessions', 'carts']) await mkdir(path.join(this.root, b), { recursive: true }); }
   async get<T>(bucket: string, id: string): Promise<T | null> {
     try { return JSON.parse(await readFile(this.file(bucket, id), 'utf8')); }
     catch (e: any) { if (e.code === 'ENOENT') return null; throw e; }

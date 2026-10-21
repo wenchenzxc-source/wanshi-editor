@@ -6,9 +6,10 @@ import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import sharp from 'sharp';
 import { createApp } from '../server/app';
-import { emptyDesign, newLayer, dimensions, templates, badgeAccessories, slotGeometry, photoImageArea, type Asset } from '../shared/model';
+import { emptyDesign, newLayer, dimensions, fitFrames, templates, badgeAccessories, slotGeometry, photoImageArea, type Asset } from '../shared/model';
 import { render } from '../server/render';
 import { Store } from '../server/store';
+import { artCatalog } from '../shared/artwork';
 
 function unzip(b: Buffer) {
   const result = new Map<string, Buffer>();
@@ -283,4 +284,60 @@ test('photo paper uses matching instax margins and rotates the image boundary', 
   assert.deepEqual(photoImageArea({ ...d, sizeId: 'instax-mini' }, t), { x: 4, y: 7, width: 46, height: 62 });
   assert.deepEqual(photoImageArea({ ...d, orientation: 'landscape' }, t), { x: 17, y: 4, width: 52, height: 42 });
   assert.deepEqual(photoImageArea({ ...d, photoHolder: { ...d.photoHolder, paperLayout: 'full' } }, t), { x: 0, y: 0, width: 50, height: 76 });
+});
+
+test('private cart uses immutable versions and original library assets remain transparent', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-cart-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  let cookie = '';
+  const req = (route: string, method = 'GET', body?: unknown, session = cookie) => fetch(url + route, { method, headers: { Cookie: session, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  try {
+    cookie = (await req('/session', 'POST')).headers.get('set-cookie')!.split(';')[0];
+    const d = emptyDesign(); await req('/designs', 'POST', d);
+    const art = await req(`/designs/${d.id}/library`, 'POST', { artworkId: 'star-glow' }); assert.equal(art.status, 201);
+    const a = await art.json(); const bytes = Buffer.from(await (await req(`/assets/${a.id}?original=1`)).arrayBuffer());
+    const raw = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); assert.equal(raw.info.width, 1600); assert.equal(raw.data[3], 0); assert.ok(raw.data.some((v, i) => i % 4 === 3 && v > 0));
+    d.layers = [newLayer('image', { assetId: a.id, x: 10, y: 10, width: 50, height: 50 })];
+    await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 });
+    const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 })).json();
+    assert.equal((await req('/cart', 'POST', { versionId: d.id })).status, 404);
+    const item = await (await req('/cart', 'POST', { versionId: v.id })).json();
+    await req('/cart', 'POST', { versionId: v.id }); assert.equal((await (await req('/cart')).json()).length, 1);
+    assert.equal((await req(`/cart/${item.id}`, 'PATCH', { quantity: 2 })).status, 200);
+    assert.equal((await req(`/cart/${item.id}`, 'PATCH', { quantity: -1 })).status, 400);
+    d.name = 'new draft'; d.layers = []; await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 2 });
+    const list = await (await req('/cart')).json(); assert.equal(list[0].name, '我的 A5 飾牌'); assert.equal(list[0].quantity, 2);
+    const other = (await req('/session', 'POST', undefined, '')).headers.get('set-cookie')!.split(';')[0];
+    assert.deepEqual(await (await req('/cart', 'GET', undefined, other)).json(), []);
+    assert.equal((await req('/cart', 'POST', { versionId: v.id }, other)).status, 404);
+    assert.equal((await req(`/cart/${item.id}`, 'PATCH', { quantity: 0 }, other)).status, 404);
+    const pack = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer())); assert.ok(pack.has(`originals/${a.id}.png`)); assert.ok(pack.has('artwork-license.txt'));
+    await req(`/cart/${item.id}`, 'PATCH', { quantity: 0 }); assert.deepEqual(await (await req('/cart')).json(), []);
+    assert.equal((await req(`/versions/${v.id}`)).status, 200);
+  } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('every original decoration rasterizes on a transparent canvas', async () => {
+  for (const artwork of artCatalog) {
+    const { data, info } = await sharp(artwork.file ? path.resolve('public/artwork', artwork.file) : Buffer.from(artwork.svg!)).resize(200, 200).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    assert.equal(info.channels, 4, artwork.id);
+    assert.equal(data[3], 0, artwork.id);
+    assert.ok(data.some((n, i) => i % 4 === 3 && n > 10), artwork.id);
+  }
+});
+
+
+test('page frame geometry and rendering preserve corners across orientations', async () => {
+  const t = templates[0];
+  const original = { ...emptyDesign(t), layers: [newLayer('frame', { frameId: 'halloween-frame' as const })] };
+  for (const orientation of ['portrait', 'landscape'] as const) {
+    const d = fitFrames({ ...original, orientation }, t), frame = d.layers[0];
+    const { w, h } = dimensions(d, t);
+    assert.equal(frame.width, w - 10); assert.equal(frame.height, h - 10); assert.equal(frame.locked, true);
+    const png = await render(d, t, [], new Store(tmpdir()), 'production', false);
+    const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const center = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * 4;
+    assert.equal(data[center + 3], 0); assert.ok(data.some((n, i) => i % 4 === 3 && n > 0));
+  }
 });
