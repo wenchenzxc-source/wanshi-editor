@@ -6,7 +6,7 @@ import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import sharp from 'sharp';
 import { createApp } from '../server/app';
-import { emptyDesign, newLayer, dimensions, templates, badgeAccessories, slotGeometry, type Asset } from '../shared/model';
+import { emptyDesign, newLayer, dimensions, templates, badgeAccessories, slotGeometry, photoImageArea, type Asset } from '../shared/model';
 import { render } from '../server/render';
 import { Store } from '../server/store';
 
@@ -217,4 +217,70 @@ test('round holes follow left center right in the current orientation', async ()
     const pixel = await sharp(png).ensureAlpha().extract({ left: Math.round((slot.x + 1.5) * 300 / 25.4), top: Math.round(6.5 * 300 / 25.4), width: 1, height: 1 }).raw().toBuffer();
     assert.equal(pixel[3], 0);
   }
+});
+
+test('photo holder saves options and exports only purchased photo printing without changing confirmed versions', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-holder-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(r => server.once('listening', r));
+  const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  let cookie = '';
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  try {
+    const session = await req('/session', 'POST'); cookie = session.headers.get('set-cookie')!.split(';')[0];
+    const t = templates.find(t => t.presentation === 'photo-holder')!;
+    let d = emptyDesign(t);
+    assert.deepEqual(dimensions(d, t), { w: 50, h: 76, fullW: 50, fullH: 76 });
+    assert.deepEqual(dimensions({ ...d, sizeId: 'instax-mini', orientation: 'landscape' }, t), { w: 86, h: 54, fullW: 86, fullH: 54 });
+    assert.equal((await req('/designs', 'POST', d)).status, 201);
+    const first = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 1 })).json();
+    const ownZip = unzip(Buffer.from(await (await req(`/versions/${first.id}/package.zip`)).arrayBuffer()));
+    assert.ok(ownZip.has('final-preview.png'));
+    assert.ok(!ownZip.has('photo-print.png') && !ownZip.has('production-with-bleed.png'));
+    assert.equal(JSON.parse(ownZip.get('photo-holder-options.json')!.toString()).printPhoto, false);
+    d = { ...d, sizeId: 'instax-mini', photoHolder: { base: true, nfc: true, photoService: 'print' } };
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 })).status, 200);
+    assert.equal((await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 })).status, 400);
+    d.layers = [newLayer('shape', { x: 0, y: 0, width: 54, height: 86, shape: 'rect', fill: '#ff0000' })];
+    assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 2 })).status, 200);
+    const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 3 })).json();
+    const pack = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
+    const options = JSON.parse(pack.get('photo-holder-options.json')!.toString());
+    assert.equal(options.desktopBase, true); assert.equal(options.rearNfc, true); assert.equal(options.printPhoto, true);
+    assert.deepEqual(options.paperSizeMm, { width: 54, height: 86 }); assert.equal(options.frameDimensionsMm, null);
+    const meta = await sharp(pack.get('photo-print.png')!).metadata();
+    assert.equal(meta.width, Math.round(54 * 300 / 25.4)); assert.equal(meta.height, Math.round(86 * 300 / 25.4));
+    assert.deepEqual((await (await req(`/designs/${d.id}`)).json()).design.photoHolder, d.photoHolder);
+    assert.deepEqual((await (await req(`/versions/${first.id}`)).json()).design.photoHolder, { base: false, nfc: false, photoService: 'own' });
+    assert.ok(!unzip(Buffer.from(await (await req(`/versions/${first.id}/package.zip`)).arrayBuffer())).has('photo-print.png'));
+  } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
+});
+
+test('photo borders match preview and production while full paper remains printable', async () => {
+  const t = templates.find(t => t.presentation === 'photo-holder')!;
+  const store = new Store(tmpdir());
+  for (const orientation of ['portrait', 'landscape'] as const) {
+    for (const sizeId of ['instax-mini', 'small-photo']) {
+      for (const paperLayout of ['full', 'border'] as const) {
+        const d = { ...emptyDesign(t), sizeId, orientation, photoHolder: { base: false, nfc: false, photoService: 'print' as const, paperLayout } };
+        const { w, h } = dimensions(d, t);
+        d.layers = [newLayer('shape', { x: 0, y: 0, width: w, height: h, shape: 'rect', fill: '#ff0000' })];
+        for (const mode of ['preview', 'production'] as const) {
+          const { data, info } = await sharp(await render(d, t, [], store, mode, false)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          const pixel = (x: number, y: number) => [...data.subarray((Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4, (Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4 + 4)];
+          assert.deepEqual(pixel(1, 1), sizeId === 'small-photo' && paperLayout === 'full' ? [255, 0, 0, 255] : [255, 255, 255, 255]);
+          assert.deepEqual(pixel(w / 2, h / 2), [255, 0, 0, 255]);
+        }
+      }
+    }
+  }
+});
+
+
+test('photo paper uses matching instax margins and rotates the image boundary', () => {
+  const t = templates.find(t => t.presentation === 'photo-holder')!;
+  const d = { ...emptyDesign(t), photoHolder: { base: false, nfc: false, photoService: 'own' as const, paperLayout: 'border' as const } };
+  assert.deepEqual(photoImageArea(d, t), { x: 4, y: 7, width: 42, height: 52 });
+  assert.deepEqual(photoImageArea({ ...d, sizeId: 'instax-mini' }, t), { x: 4, y: 7, width: 46, height: 62 });
+  assert.deepEqual(photoImageArea({ ...d, orientation: 'landscape' }, t), { x: 17, y: 4, width: 52, height: 42 });
+  assert.deepEqual(photoImageArea({ ...d, photoHolder: { ...d.photoHolder, paperLayout: 'full' } }, t), { x: 0, y: 0, width: 50, height: 76 });
 });

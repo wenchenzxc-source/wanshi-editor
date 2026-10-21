@@ -1,4 +1,4 @@
-import { dimensions, materials, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template } from './model';
+import { dimensions, materials, slotGeometry, badgeRadius, photoImageArea, type Design, type DesignLayer, type Template } from './model';
 export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number, clearOpacity = 0.16) {
   ctx.save();
   if (!d.material) { ctx.globalAlpha = d.backgroundOpacity; ctx.fillStyle = d.background; }
@@ -12,6 +12,14 @@ export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: numbe
   ctx.fillRect(0, 0, w, h); ctx.restore();
 }
 export type RenderMode = 'preview' | 'production' | 'mask';
+export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Template, mode: RenderMode = 'preview') {
+  const area = photoImageArea(d, t); if (!area) return;
+  const { w, h } = dimensions(d, t);
+  ctx.save(); ctx.globalAlpha = 1; ctx.fillStyle = mode === 'mask' ? '#000000' : '#ffffff';
+  ctx.fillRect(0, 0, w, area.y); ctx.fillRect(0, area.y + area.height, w, h - area.y - area.height);
+  ctx.fillRect(0, area.y, area.x, area.height); ctx.fillRect(area.x + area.width, area.y, w - area.x - area.width, area.height);
+  ctx.restore();
+}
 import { getFont } from './fonts';
 export const FONT = 'Wanshi Sans';
 export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview') {
@@ -51,7 +59,7 @@ export function drawDesign(ctx: CanvasRenderingContext2D, d: Design, t: Template
   if (mode === 'mask') { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, bleed ? fullW : w, bleed ? fullH : h); }
   const radius = badgeRadius(d, t);
   if (radius) { ctx.beginPath(); ctx.roundRect(b, b, w, h, radius); ctx.clip(); }
-  if (mode !== 'mask' && (mode === 'preview' || !d.material)) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h, t.presentation === 'acrylic-badge' ? 0.035 : 0.16);
+  if (mode !== 'mask' && (mode === 'preview' || !d.material || t.presentation === 'photo-holder')) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h, t.presentation === 'acrylic-badge' ? 0.035 : 0.16);
   ctx.translate(b, b);
   for (const l of d.layers.filter(l => (l.face || 'front') === (!d.printStack && d.duplex ? d.activeFace || 'front' : 'front'))) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode); ctx.restore(); }
   if (mode === 'preview' && d.printView === 'acrylic') {
@@ -67,6 +75,7 @@ export function drawDesign(ctx: CanvasRenderingContext2D, d: Design, t: Template
     ctx.fillStyle = reflection; ctx.fillRect(0, 0, w, h); ctx.restore();
   }
   const slot = slotGeometry(d, t);
+  drawPhotoBorder(ctx, d, t, mode);
   if (slot) {
     ctx.save(); ctx.globalAlpha = 1;
     if (mode !== 'mask') ctx.globalCompositeOperation = 'destination-out';

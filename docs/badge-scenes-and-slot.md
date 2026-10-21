@@ -36,5 +36,18 @@ Photorealistic square editorial close-up of a person's upper torso wearing a sof
 
 製作包新增 badge-cut-path.svg，黑線是圓角牌身外框，紅線是孔槽。slot-cut-path.svg 仍提供獨立孔槽路徑。兩檔供選擇使用，勿重複加工相同路徑。PNG 同步處理圓角與孔槽；UV 遮罩在孔與外框之外為黑。已確認版本依當時快照的圓角值輸出。
 
-生活情境照片目前仍為通用金屬扣示意，不會因配件選擇變成該配件的實拍；所選配件名稱、孔槽與牌身外形即時同步。
-圓孔新增 left／center／right 定位，左右孔的孔邊距側邊 5 mm，頂邊距上緣 5 mm；長槽保持上方置中。manufacturing.json 的 placement 與 SVG 實際座標同步。情境預覽依實際孔位對齊掛扣，透明底材減少霧灰覆蓋，加入玻璃薄邊與反光；掛扣前景僅遮罩金屬邊緣，避免覆蓋一整塊背景。
+圓孔新增 left／center／right 定位，左右孔的孔邊距側邊 5 mm，頂邊距上緣 5 mm；長槽保持上方置中。manufacturing.json 的 placement 與 SVG 實際座標同步。情境預覽依實際孔位對齊掛扣，透明底材減少霧灰覆蓋，加入玻璃薄邊與反光。
+
+## 獨立配件預覽（2026-10-21）
+
+背景改為移除固定掛扣的 clean-v2 照片。`src/BadgeHardware.tsx` 以獨立 SVG 圖層呈現六種配件：織帶扣、珠鍊、鑰匙圈、識別證掛繩、皮繩掛扣、原款掛扣。這是配件外觀示意，並非供應商實拍。布紋、金屬漸層與陰影由 SVG 繪製，依選項即時切換；連接點與 live art 使用同一場景座標及實際孔槽幾何。直橫式及左右孔位不另用合成圖。不開孔、自訂槽不擅自搭配掛扣。一般及放大預覽共用元件。配件僅影響情境預覽，不寫入生產圖稿。
+
+使用內建 image_gen 編輯既有場景照片，原 v1 保留。新增檔案：
+- `public/scenes/badge-backpack-clean-v2.png`，來源 `exec-e7eb284c-57d9-4ceb-8e7b-b80e1e290489.png`。
+- `public/scenes/badge-lanyard-clean-v2.png`，來源 `exec-4e169d34-e8bd-4c97-b575-a21d1a564617.png`。
+
+背包編輯 prompt：Remove the central black short webbing tab AND all its metal ring and clasp from this backpack photo. Reconstruct uninterrupted olive fabric and seams underneath. Keep precisely the same bag composition, camera framing, zipper, lighting, chair, texture. No hardware or tag in the center.
+
+配戴編輯 prompt：Remove the ENTIRE teal neck lanyard, both long straps, and all metal rings and clasp from this torso photo. Reconstruct natural beige shirt fabric, placket and buttons underneath. Keep the exact composition, crop, body and lighting. No lanyard, hardware or badge anywhere.
+
+驗證：Playwright 檢查兩個場景中六種配件各有不同畫面、放大預覽同配件／同錨點、不開孔與自訂槽無掛扣，另保留孔位及重載測試。

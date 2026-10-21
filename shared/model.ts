@@ -26,6 +26,7 @@ export const designSchema = z.object({
   customSize: z.object({ widthMm: z.number().min(20).max(250).multipleOf(5), heightMm: z.number().min(20).max(250).multipleOf(5), thicknessMm: z.number().min(5).max(50).multipleOf(5) }).optional(),
   badgeAccessory: z.enum(['webbing', 'ball-chain', 'keyring', 'lanyard', 'leather', 'original', 'custom', 'none']).optional(),
   badgeCornerRadiusMm: z.union([z.literal(3), z.literal(4)]).optional(),
+  photoHolder: z.object({ base: z.boolean(), nfc: z.boolean(), photoService: z.enum(['own', 'print']), paperLayout: z.enum(['full', 'border']).optional() }).optional(),
   slot: z.object({ position: z.enum(['left', 'center', 'right']).optional(), shape: z.enum(['slot', 'circle']).optional(), enabled: z.boolean(), widthMm: z.number().int().min(1).max(250), heightMm: z.number().int().min(1).max(250) }).optional(),
   background: color, backgroundOpacity: z.number().min(0).max(1),
   material: z.enum(['clear', 'black', 'white', 'iridescent', 'gold', 'silver', 'roseGold']).optional(),
@@ -54,7 +55,7 @@ export type Zone = { x: number; y: number; width: number; height: number; label:
 export type Template = {
   id: string; name: string; version: number; widthMm: number; heightMm: number;
   bleedMm: number; safeMm: number; cornerRadiusMm?: number; dpi: number; noProcess: Zone[];
-  presentation?: 'plaque' | 'acrylic-block' | 'acrylic-badge';
+  presentation?: 'plaque' | 'acrylic-block' | 'acrylic-badge' | 'photo-holder';
   allowedMaterials?: Material[];
   allowCustomSize?: boolean; thicknessMm?: number;
   sizes?: { id: string; name: string; widthMm: number; heightMm: number; thicknessMm?: number; retired?: boolean }[];
@@ -77,6 +78,9 @@ export const templates: Template[] = [{ id: 'a5-plaque-v1', name: 'A5 飾牌', v
   { id: '50x90', name: '名片型', widthMm: 50, heightMm: 90 },
   { id: '60x90', name: '加寬型', widthMm: 60, heightMm: 90 },
   { id: '80x80', name: '方形', widthMm: 80, heightMm: 80 },
+] }, { id: 'photo-holder-v1', name: '照片立／掛牌', version: 1, presentation: 'photo-holder', widthMm: 50, heightMm: 76, bleedMm: 0, safeMm: 0, dpi: 300, noProcess: [], allowedMaterials: ['white'], sizes: [
+  { id: 'small-photo', name: '小相紙', widthMm: 50, heightMm: 76 },
+  { id: 'instax-mini', name: '拍立得 mini', widthMm: 54, heightMm: 86 },
 ] }];
 export function dimensions(d: Pick<Design, 'orientation' | 'sizeId' | 'customSize'>, t: Template) {
   t = resolveTemplate(d, t);
@@ -89,7 +93,7 @@ export function zones(d: Design, t: Template): Zone[] {
   return t.noProcess.map(z => d.orientation === 'portrait' ? z : { ...z, x: t.heightMm - z.y - z.height, y: z.x, width: z.height, height: z.width });
 }
 export function emptyDesign(template = templates[0]): Design {
-  return { schemaVersion: 1, id: crypto.randomUUID(), name: `我的 ${template.name}`, templateId: template.id, ...(template.sizes?.length ? { sizeId: template.sizes[0].id } : {}), orientation: 'portrait', material: template.allowedMaterials?.[0] || 'white', printStack: 'white-cmyk', duplex: false, activeFace: 'front', printView: 'direct', background: '#faf6ef', backgroundOpacity: 1, layers: [], wooCommerceProductId: null, orderItemId: null };
+  return { schemaVersion: 1, id: crypto.randomUUID(), name: `我的 ${template.name}`, templateId: template.id, ...(template.sizes?.length ? { sizeId: template.sizes[0].id } : {}), orientation: 'portrait', ...(template.presentation === 'photo-holder' ? { photoHolder: { base: false, nfc: false, photoService: 'own' as const } } : {}), material: template.allowedMaterials?.[0] || 'white', printStack: 'white-cmyk', duplex: false, activeFace: 'front', printView: 'direct', background: '#faf6ef', backgroundOpacity: 1, layers: [], wooCommerceProductId: null, orderItemId: null };
 }
 export function newLayer(kind: DesignLayer['kind'], patch: Partial<DesignLayer> = {}): DesignLayer {
   return { id: crypto.randomUUID(), name: kind === 'text' ? '文字' : kind === 'uv' ? 'UV 微浮雕' : '裝飾', kind, x: 30, y: 40, width: 50, height: 50, rotation: 0, opacity: 1, visible: true, locked: false, fill: '#b89571', shape: 'petal', ...patch };
@@ -114,3 +118,14 @@ export const badgeAccessories = [
   { id: 'original', name: '原款掛扣', widthMm: 5, heightMm: 5, shape: 'circle', image: '' },
 ] as const;
 export function badgeRadius(d: Design, t: Template) { return t.presentation === 'acrylic-badge' ? d.badgeCornerRadiusMm ?? t.cornerRadiusMm ?? 0 : 0; }
+
+// Paper-local image window; landscape rotates the whole paper clockwise.
+export function photoImageArea(d: Design, t: Template) {
+  if (t.presentation !== 'photo-holder') return null;
+  const paper = resolveTemplate(d, t);
+  const mini = d.sizeId === 'instax-mini';
+  const area = mini ? { x: 4, y: 7, width: 46, height: 62 }
+    : d.photoHolder?.paperLayout === 'border' ? { x: 4, y: 7, width: paper.widthMm - 8, height: paper.heightMm - 24 }
+    : { x: 0, y: 0, width: paper.widthMm, height: paper.heightMm };
+  return d.orientation === 'portrait' ? area : { x: paper.heightMm - area.y - area.height, y: area.x, width: area.height, height: area.width };
+}

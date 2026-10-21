@@ -1,3 +1,4 @@
+import { PhotoHolderScene } from './PhotoHolder';
 import { BadgeScene } from './BadgeScene';
 import { useEffect, useState } from 'react';
 import { Preview } from './Canvas';
@@ -27,6 +28,7 @@ export function ProductScene({ design, template, images }: { design: Design; tem
   useEffect(() => { if (!expanded) return; const close = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, [expanded]);
   const standing = scene !== 'wall';
   useEffect(() => { try { localStorage.setItem('wanshi:preview-scene', scene); localStorage.setItem('wanshi:preview-finish', finish); } catch { /* Storage is optional for preview. */ } }, [scene, finish]);
+  if (template.presentation === 'photo-holder') return <PhotoHolderScene design={design} template={template} images={images}/>;
   if (template.presentation === 'acrylic-badge') return <BadgeScene design={design} template={template} images={images}/>;
   if (template.presentation === 'acrylic-block') {
     const { w, h } = dimensions(design, template);

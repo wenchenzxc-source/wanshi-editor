@@ -449,6 +449,7 @@ test('sidebar accessories apply exact holes and persist rounded corners', async 
     await panel.getByRole('button', { name: new RegExp(name) }).click();
     await expect.poll(async () => (await draft(page)).design.slot).toEqual({ enabled: true, widthMm: width, heightMm: height, shape, ...(shape === 'circle' ? { position: 'center' } : {}) });
     await expect.poll(async () => (await draft(page)).design.badgeAccessory).toBe(id);
+    await expect(page.locator('.badge-hardware')).toHaveAttribute('data-accessory', id);
   }
   await page.getByRole('button', { name: 'R4 mm', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.badgeCornerRadiusMm).toBe(4);
@@ -460,6 +461,35 @@ test('sidebar accessories apply exact holes and persist rounded corners', async 
   await expect(panel.getByRole('button', { name: /織帶扣/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/badge-accessories-mobile.png', fullPage: true });
+});
+
+test('badge hardware changes visually in both scenes and expanded preview', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1100 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true }).click();
+  const panel = page.getByRole('region', { name: '識別牌配件與孔槽' });
+  const preview = page.getByLabel('壓克力識別牌預覽');
+  for (const scene of ['背包吊牌', '識別證配戴']) {
+    await page.getByRole('button', { name: scene, exact: true }).click();
+    await expect(preview.locator('.badge-lifestyle>img')).toHaveAttribute('src', /clean-v2/);
+    await expect.poll(() => preview.locator('.badge-lifestyle>img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    const pictures: string[] = [];
+    for (const [name, id] of [['織帶扣', 'webbing'], ['珠鍊', 'ball-chain'], ['鑰匙圈', 'keyring'], ['識別證掛繩', 'lanyard'], ['皮繩掛扣', 'leather'], ['原款掛扣', 'original']]) {
+      await panel.getByRole('button', { name: new RegExp(name) }).click();
+      await expect(preview.locator('.badge-hardware')).toHaveAttribute('data-accessory', id);
+      pictures.push((await preview.locator('.badge-lifestyle').screenshot({ path: `test-results/hardware-${scene}-${id}.png` })).toString('base64'));
+    }
+    expect(new Set(pictures).size).toBe(6);
+    await page.getByRole('button', { name: '⤢ 放大情境預覽', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '放大識別牌預覽' });
+    await expect(dialog.locator('.badge-hardware')).toHaveAttribute('data-accessory', 'original');
+    await expect(dialog.locator('.badge-hardware')).toHaveAttribute('data-anchor', await preview.locator('.badge-hardware').first().getAttribute('data-anchor') || '');
+    await dialog.getByRole('button', { name: '關閉', exact: true }).click();
+    await panel.getByRole('button', { name: '不開孔', exact: true }).click();
+    await expect(preview.locator('.badge-hardware')).toHaveCount(0);
+    await panel.getByRole('button', { name: '自訂長槽', exact: true }).click();
+    await expect(preview.locator('.badge-hardware')).toHaveCount(0);
+  }
 });
 
 test('round-hole position moves the attachment without drifting off the scene', async ({ page }) => {
@@ -480,4 +510,52 @@ test('round-hole position moves the attachment without drifting off the scene', 
   await page.reload(); await expect(positions.getByRole('button', { name: '右', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: 'test-results/clear-badge-right-hole.png', fullPage: true });
   await page.getByRole('button', { name: /織帶扣/ }).click(); await expect(positions).toHaveCount(0);
+});
+
+test('photo holder paper sizes, base, NFC and photo service persist and preview on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1100 }); await page.goto('/');
+  await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
+  const options = page.getByRole('region', { name: '照片立掛牌選配' });
+  const sizes = page.getByRole('group', { name: '照片規格' });
+  await expect(sizes.getByRole('button')).toHaveCount(2);
+  await expect(sizes.getByRole('button', { name: /相紙/ })).toHaveAttribute('aria-pressed', 'true');
+  await sizes.getByRole('button', { name: /拍立得/ }).click();
+  await options.getByLabel('加購桌面底座').check(); await options.getByLabel('背面加裝 NFC').check();
+  await options.getByRole('button', { name: '加購照片列印', exact: true }).click();
+  await upload(page);
+  await expect.poll(async () => (await draft(page)).design.photoHolder).toEqual({ base: true, nfc: true, photoService: 'print' });
+  await page.reload(); await expect(options.getByLabel('加購桌面底座')).toBeChecked();
+  await expect(sizes.getByRole('button', { name: /拍立得/ })).toHaveAttribute('aria-pressed', 'true');
+  const scene = page.locator('.holder-scene'); await expect(scene).toHaveAttribute('data-base', 'true');
+  await expect(page.getByRole('group', { name: '照片框觀看面' })).toHaveCount(0);
+  await expect(scene).toHaveCount(1); await expect(scene).toHaveAttribute('data-face', 'front');
+  await expect(scene).toHaveAttribute('data-nfc', 'true');
+  await options.getByLabel('背面加裝 NFC').uncheck();
+  await expect(scene).toHaveAttribute('data-nfc', 'false');
+  await expect(scene).toHaveAttribute('data-face', 'front');
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect(page.getByLabel('照片立掛牌預覽')).toContainText('相紙 86 × 54 mm');
+  await page.screenshot({ path: 'test-results/photo-holder-desktop.png', fullPage: true });
+  await options.getByLabel('加購桌面底座').uncheck(); await expect(scene).toHaveAttribute('data-base', 'false');
+  await page.getByRole('button', { name: '⤢ 放大照片框預覽', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '放大照片框預覽' })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '關閉', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/photo-holder-mobile.png', fullPage: true });
+});
+
+test('photo paper full bleed and border choices persist with one preview', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
+  const layouts = page.getByRole('group', { name: '相紙版面' });
+  await layouts.getByRole('button', { name: '拍立得白邊', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.photoHolder?.paperLayout).toBe('border');
+  await page.reload(); await expect(layouts.getByRole('button', { name: '拍立得白邊' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /拍立得/ }).click();
+  await expect(layouts).toHaveCount(0); await expect(page.getByLabel('照片立掛牌預覽')).toContainText('拍立得白邊');
+  await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /相紙/ }).click();
+  await layouts.getByRole('button', { name: '滿版', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.photoHolder?.paperLayout).toBe('full');
+  await expect(page.locator('.holder-scene')).toHaveCount(1);
 });

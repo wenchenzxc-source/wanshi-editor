@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
-import { drawLayer, drawDesign, drawSubstrate } from '../shared/draw';
-import { dimensions, zones, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
+import { drawLayer, drawDesign, drawSubstrate, drawPhotoBorder } from '../shared/draw';
+import { dimensions, zones, photoImageArea, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
 
 export function useImages(assets: Asset[]) {
   const [images, setImages] = useState(new Map<string, HTMLImageElement>());
@@ -20,6 +20,7 @@ export function useImages(assets: Asset[]) {
 }
 type Props = { design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled }: Props) {
+  const photoArea = photoImageArea(design, template);
   const proxyRef = useRef<Konva.Rect>(null);
   const transformRef = useRef<Konva.Transformer>(null), nodes = useRef(new Map<string, Konva.Shape>());
   const [snapLines, setSnapLines] = useState<{ x?: number; y?: number }>({});
@@ -65,7 +66,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   }
   function snap(node: Konva.Node) {
     const bounds = node.getClientRect({ relativeTo: node.getParent()! });
-    const targetsX = [0, w / 2, w, template.safeMm, w - template.safeMm], targetsY = [0, h / 2, h, template.safeMm, h - template.safeMm];
+    const targetsX = photoArea ? [photoArea.x, photoArea.x + photoArea.width / 2, photoArea.x + photoArea.width] : [0, w / 2, w, template.safeMm, w - template.safeMm], targetsY = photoArea ? [photoArea.y, photoArea.y + photoArea.height / 2, photoArea.y + photoArea.height] : [0, h / 2, h, template.safeMm, h - template.safeMm];
     for (const [id, n] of nodes.current) if (id !== selected && n.visible()) { const r = n.getClientRect({ relativeTo: n.getParent()! }); targetsX.push(r.x, r.x + r.width / 2, r.x + r.width); targetsY.push(r.y, r.y + r.height / 2, r.y + r.height); }
     const closest = (from: number[], to: number[]) => from.flatMap(a => to.map(v => ({ delta: v - a, v }))).sort((a, b) => Math.abs(a.delta) - Math.abs(b.delta))[0];
     const sx = closest([bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width], targetsX), sy = closest([bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height], targetsY);
@@ -90,12 +91,13 @@ export function EditorCanvas({ design, template, images, selected, select, commi
               onTransform={() => live(updated(l, nodes.current.get(l.id)!))}
               onTransformEnd={() => { const node = nodes.current.get(l.id)!; const next = updated(l, node); node.scale({ x: 1, y: 1 }); commit(next); live(null); }}
             />)}
+            <Shape listening={false} sceneFunc={ctx => drawPhotoBorder(ctx._context, design, template)}/>
           </Group>
         </Group>
         {slot && <Rect x={b + slot.x} y={b + slot.y} width={slot.width} height={slot.height} cornerRadius={slot.radius} fill="#dbe3db" stroke="#7a8e82" strokeWidth={0.25} onClick={() => select(null)} onTap={() => select(null)}/>}
         {guides && <Group listening={false}>
-          <Rect x={b} y={b} width={w} height={h} cornerRadius={radius} stroke="#b67b52" strokeWidth={0.35} dash={[2, 2]}/>
-          <Rect x={b + template.safeMm} y={b + template.safeMm} width={w - 2 * template.safeMm} height={h - 2 * template.safeMm} cornerRadius={Math.max(0, radius - template.safeMm)} stroke="#438a80" strokeWidth={0.35} dash={[2, 2]}/>
+          <Rect x={b} y={b} width={w} height={h} cornerRadius={radius} stroke={photoArea ? "#b5bdb1" : "#b67b52"} strokeWidth={0.35} dash={photoArea ? undefined : [2, 2]}/>
+          <Rect x={b + (photoArea?.x ?? template.safeMm)} y={b + (photoArea?.y ?? template.safeMm)} width={photoArea?.width ?? w - 2 * template.safeMm} height={photoArea?.height ?? h - 2 * template.safeMm} cornerRadius={Math.max(0, radius - template.safeMm)} stroke="#438a80" strokeWidth={0.35} dash={[2, 2]}/>
           {zones(design, template).map((z, i) => <Rect key={i} x={b + z.x} y={b + z.y} width={z.width} height={z.height} fill="#e75d5d44" stroke="#cf4444" strokeWidth={0.4}/>)}
           {snapLines.x !== undefined && <Line points={[b + snapLines.x, 0, b + snapLines.x, fullH]} stroke="#df5a95" strokeWidth={0.45}/>}
           {snapLines.y !== undefined && <Line points={[0, b + snapLines.y, fullW, b + snapLines.y]} stroke="#df5a95" strokeWidth={0.45}/>}

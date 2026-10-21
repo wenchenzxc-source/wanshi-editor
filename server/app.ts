@@ -6,7 +6,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { designSchema, templates, resolveTemplate, dimensions, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
+import { designSchema, templates, resolveTemplate, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
 import { Store } from './store';
 import { fontPath, registerFont, render } from './render';
 import { fonts } from '../shared/fonts';
@@ -31,7 +31,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'badge-position-v10' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'photo-border-v12' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (existing && await store.get('sessions', hash(existing))) return res.json({ ok: true });
@@ -57,6 +57,10 @@ export async function createApp(dataDir: string, options: { templates?: Template
   const validateDesign = async (d: Design, owner: string) => {
     const template = catalog.find(t => t.id === d.templateId);
     if (!template) throw new HttpError(400, '未知商品模板');
+    if (template.presentation === 'photo-holder') {
+      if (!d.photoHolder) throw new HttpError(400, '請選擇照片服務、底座與 NFC');
+      if (d.duplex || d.printView === 'acrylic' || d.printStack !== 'white-cmyk') throw new HttpError(400, '照片相紙不支援壓克力印刷效果');
+    } else if (d.photoHolder) throw new HttpError(400, '此商品不支援照片框選配');
     if (template.allowedMaterials && !template.allowedMaterials.includes(d.material!)) throw new HttpError(400, '此商品不支援所選底材');
     if (!(template.allowCustomSize && d.sizeId === 'custom') && (template.sizes?.length ? !template.sizes.some(s => s.id === d.sizeId) : d.sizeId !== undefined)) throw new HttpError(400, '請選擇有效的商品尺寸');
     const resolved = resolveTemplate(d, template);
@@ -144,6 +148,8 @@ export async function createApp(dataDir: string, options: { templates?: Template
     await store.exclusive(req.params.id, async () => {
       const d = await owned(req.params.id, res.locals.owner);
       if (revision !== d.revision) throw new HttpError(409, '確認前請先儲存最新設計');
+      if (d.design.photoHolder?.photoService === 'print' && !d.design.layers.some(l => l.visible && l.opacity > 0 && l.kind !== 'uv' && l.face !== 'back')) throw new HttpError(400, '加購照片列印請先加入照片、文字或圖稿');
+      if (d.design.photoHolder && d.design.layers.some(l => l.kind === 'uv' && l.visible)) throw new HttpError(400, '照片列印不支援 UV 微浮雕，請隱藏或刪除 UV 圖層');
       const v: Snapshot = { ...d, id: randomUUID(), createdAt: new Date().toISOString(), template: resolveTemplate(d.design, catalog.find(t => t.id === d.design.templateId)!), assets: await assetsFor(d.design.id, d.owner) };
       // Persist actual output bytes at confirmation: later fonts/render changes cannot change an order.
       const front = { ...v.design, activeFace: 'front' as const };
@@ -180,7 +186,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     for (const license of new Set(usedFonts.map(f => f.license))) zip.file(path.join(path.dirname(fontPath), license), { name: `fonts/${license}` });
     zip.append(JSON.stringify({ versionId: v.id, createdAt: v.createdAt, revision: v.revision, template: v.template, assets: v.assets, wooCommerceProductId: v.design.wooCommerceProductId, orderItemId: v.design.orderItemId, units: 'mm', origin: 'trim-top-left', uv: 'grayscale: black=none, white=full; preview is conceptual' }, null, 2), { name: 'manifest.json' });
     zip.file(store.file('files', `${v.id}-preview`, 'png'), { name: 'final-preview.png' });
-    zip.file(store.file('files', `${v.id}-production`, 'png'), { name: 'production-with-bleed.png' });
+    if (!v.design.photoHolder || v.design.photoHolder.photoService === 'print') zip.file(store.file('files', `${v.id}-production`, 'png'), { name: v.design.photoHolder ? 'photo-print.png' : 'production-with-bleed.png' });
     if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) zip.file(store.file('files', `${v.id}-mask`, 'png'), { name: 'uv-mask.png' });
     if (v.design.duplex && !v.design.printStack) {
       zip.file(store.file('files', `${v.id}-back-preview`, 'png'), { name: 'back-final-preview.png' });
@@ -188,11 +194,12 @@ export async function createApp(dataDir: string, options: { templates?: Template
       if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) zip.file(store.file('files', `${v.id}-back-mask`, 'png'), { name: 'back-uv-mask.png' });
     }
     const slot = slotGeometry(v.design, v.template), physical = dimensions(v.design, v.template);
+    if (v.design.photoHolder) zip.append(JSON.stringify({ product: '照片立／掛牌', paper: v.template.sizes?.find(s => s.id === v.design.sizeId)?.name, paperSizeMm: { width: physical.w, height: physical.h }, imageAreaMm: photoImageArea(v.design, v.template), paperLayout: v.design.sizeId === 'instax-mini' ? 'instax-border' : v.design.photoHolder.paperLayout || 'full', photoService: v.design.photoHolder.photoService, printPhoto: v.design.photoHolder.photoService === 'print', desktopBase: v.design.photoHolder.base, rearNfc: v.design.photoHolder.nfc, nfcProgramming: v.design.photoHolder.nfc ? 'to-be-configured' : 'not-included', frameDimensionsMm: null, frameDimensionsStatus: 'awaiting-confirmation', preview: 'paper artwork only; frame illustration is not a manufacturing outline' }, null, 2), { name: 'photo-holder-options.json' });
     if (slot) zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/></svg>`, { name: 'slot-cut-path.svg' });
     if (v.template.presentation === 'acrylic-badge') zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="0" y="0" width="${physical.w}" height="${physical.h}" rx="${badgeRadius(v.design, v.template)}" fill="none" stroke="#000000" stroke-width="0.1"/>${slot ? `<rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/>` : ''}</svg>`, { name: 'badge-cut-path.svg' });
-    zip.append(JSON.stringify({ badgeAccessory: v.design.badgeAccessory || null, cornerRadiusMm: badgeRadius(v.design, v.template), slot: slot ? { ...slot, units: 'mm', placement: `top-${v.design.slot?.shape === 'circle' ? v.design.slot.position || 'center' : 'center'}`, topOffsetMm: 5 } : null, material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: physical.w, heightMm: physical.h, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
+    zip.append(JSON.stringify({ ...(v.design.photoHolder ? { photoHolder: v.design.photoHolder, dimensionScope: 'photo-paper', frameDimensionsMm: null, printPhoto: v.design.photoHolder.photoService === 'print' } : {}), badgeAccessory: v.design.badgeAccessory || null, cornerRadiusMm: badgeRadius(v.design, v.template), slot: slot ? { ...slot, units: 'mm', placement: `top-${v.design.slot?.shape === 'circle' ? v.design.slot.position || 'center' : 'center'}`, topOffsetMm: 5 } : null, material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: physical.w, heightMm: physical.h, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
     for (const a of v.assets) zip.file(store.file('files', a.id, 'bin'), { name: `${a.variant === 'original' ? 'originals' : 'cutouts'}/${a.id}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime.split('/')[1]}` });
-    zip.append('原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 依 manifest.json 的模板出血設定輸出（出血為 0 時即成品大小）；final-preview.png 為成品與 UV 示意。安全線為排版提醒，不會自動裁切圖稿。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
+    zip.append(v.design.photoHolder ? `照片立／掛牌：本包尺寸為相紙範圍，非外框成品尺寸。外框尺寸尚待確認，不提供外框切割檔。\n${v.design.photoHolder.photoService === 'own' ? '客人自備照片：final-preview.png 僅供試放參考，不安排照片列印。' : '加購照片列印：photo-print.png 為相紙尺寸圖稿；列印方式依實際設備確認。'}\n底座、背面 NFC 選配見 photo-holder-options.json。NFC 選配不代表晶片已寫入。原始圖片與可編輯 JSON 保留。` : '原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 依 manifest.json 的模板出血設定輸出（出血為 0 時即成品大小）；final-preview.png 為成品與 UV 示意。安全線為排版提醒，不會自動裁切圖稿。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
     await zip.finalize();
   });
   app.use('/api', (_req, _res, next) => next(new HttpError(404, '找不到 API')));
