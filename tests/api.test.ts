@@ -251,7 +251,7 @@ test('photo holder saves options and exports only purchased photo printing witho
     const meta = await sharp(pack.get('photo-print.png')!).metadata();
     assert.equal(meta.width, Math.round(54 * 300 / 25.4)); assert.equal(meta.height, Math.round(86 * 300 / 25.4));
     assert.deepEqual((await (await req(`/designs/${d.id}`)).json()).design.photoHolder, d.photoHolder);
-    assert.deepEqual((await (await req(`/versions/${first.id}`)).json()).design.photoHolder, { base: false, nfc: false, photoService: 'own' });
+    assert.deepEqual((await (await req(`/versions/${first.id}`)).json()).design.photoHolder, { base: false, nfc: false, photoService: 'own', paperLayout: 'full' });
     assert.ok(!unzip(Buffer.from(await (await req(`/versions/${first.id}/package.zip`)).arrayBuffer())).has('photo-print.png'));
   } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
 });
@@ -259,31 +259,25 @@ test('photo holder saves options and exports only purchased photo printing witho
 test('photo borders match preview and production while full paper remains printable', async () => {
   const t = templates.find(t => t.presentation === 'photo-holder')!;
   const store = new Store(tmpdir());
-  for (const orientation of ['portrait', 'landscape'] as const) {
-    for (const sizeId of ['instax-mini', 'small-photo']) {
-      for (const paperLayout of ['full', 'border'] as const) {
-        const d = { ...emptyDesign(t), sizeId, orientation, photoHolder: { base: false, nfc: false, photoService: 'print' as const, paperLayout } };
+  for (const sizeId of ['instax-mini', 'small-photo']) {
+        const d = { ...emptyDesign(t), sizeId, orientation: 'portrait' as const, photoHolder: { base: false, nfc: false, photoService: 'print' as const, paperLayout: 'full' as const } };
         const { w, h } = dimensions(d, t);
         d.layers = [newLayer('shape', { x: 0, y: 0, width: w, height: h, shape: 'rect', fill: '#ff0000' })];
         for (const mode of ['preview', 'production'] as const) {
           const { data, info } = await sharp(await render(d, t, [], store, mode, false)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
           const pixel = (x: number, y: number) => [...data.subarray((Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4, (Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4 + 4)];
-          assert.deepEqual(pixel(1, 1), sizeId === 'small-photo' && paperLayout === 'full' ? [255, 0, 0, 255] : [255, 255, 255, 255]);
+          assert.deepEqual(pixel(1, 1), sizeId === 'small-photo' ? [255, 0, 0, 255] : [255, 255, 255, 255]);
           assert.deepEqual(pixel(w / 2, h / 2), [255, 0, 0, 255]);
         }
-      }
-    }
   }
 });
 
 
-test('photo paper uses matching instax margins and rotates the image boundary', () => {
+test('photo holder uses a full small-photo page and fixed portrait Instax margins', () => {
   const t = templates.find(t => t.presentation === 'photo-holder')!;
-  const d = { ...emptyDesign(t), photoHolder: { base: false, nfc: false, photoService: 'own' as const, paperLayout: 'border' as const } };
-  assert.deepEqual(photoImageArea(d, t), { x: 4, y: 7, width: 42, height: 52 });
+  const d = emptyDesign(t);
+  assert.deepEqual(photoImageArea(d, t), { x: 0, y: 0, width: 50, height: 76 });
   assert.deepEqual(photoImageArea({ ...d, sizeId: 'instax-mini' }, t), { x: 4, y: 7, width: 46, height: 62 });
-  assert.deepEqual(photoImageArea({ ...d, orientation: 'landscape' }, t), { x: 17, y: 4, width: 52, height: 42 });
-  assert.deepEqual(photoImageArea({ ...d, photoHolder: { ...d.photoHolder, paperLayout: 'full' } }, t), { x: 0, y: 0, width: 50, height: 76 });
 });
 
 test('private cart uses immutable versions and original library assets remain transparent', async () => {

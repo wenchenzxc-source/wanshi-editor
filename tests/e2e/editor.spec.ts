@@ -523,7 +523,7 @@ test('photo holder paper sizes, base, NFC and photo service persist and preview 
   await options.getByLabel('加購桌面底座').check(); await options.getByLabel('背面加裝 NFC').check();
   await options.getByRole('button', { name: '加購照片列印', exact: true }).click();
   await upload(page);
-  await expect.poll(async () => (await draft(page)).design.photoHolder).toEqual({ base: true, nfc: true, photoService: 'print' });
+  await expect.poll(async () => (await draft(page)).design.photoHolder).toEqual({ base: true, nfc: true, photoService: 'print', paperLayout: 'full' });
   await page.reload(); await expect(options.getByLabel('加購桌面底座')).toBeChecked();
   await expect(sizes.getByRole('button', { name: /拍立得/ })).toHaveAttribute('aria-pressed', 'true');
   const scene = page.locator('.holder-scene'); await expect(scene).toHaveAttribute('data-base', 'true');
@@ -533,8 +533,9 @@ test('photo holder paper sizes, base, NFC and photo service persist and preview 
   await options.getByLabel('背面加裝 NFC').uncheck();
   await expect(scene).toHaveAttribute('data-nfc', 'false');
   await expect(scene).toHaveAttribute('data-face', 'front');
-  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
-  await expect(page.getByLabel('照片立掛牌預覽')).toContainText('相紙 86 × 54 mm');
+  await expect(page.getByText('固定直式', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '切換為橫式', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('照片立掛牌預覽')).toContainText('相紙 54 × 86 mm');
   await page.screenshot({ path: 'test-results/photo-holder-desktop.png', fullPage: true });
   await options.getByLabel('加購桌面底座').uncheck(); await expect(scene).toHaveAttribute('data-base', 'false');
   await page.getByRole('button', { name: '⤢ 放大照片框預覽', exact: true }).click();
@@ -545,17 +546,15 @@ test('photo holder paper sizes, base, NFC and photo service persist and preview 
   await page.screenshot({ path: 'test-results/photo-holder-mobile.png', fullPage: true });
 });
 
-test('photo paper full bleed and border choices persist with one preview', async ({ page }) => {
+test('photo paper is portrait-only with full small-paper and fixed Instax image areas', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
-  const layouts = page.getByRole('group', { name: '相紙版面' });
-  await layouts.getByRole('button', { name: '拍立得白邊', exact: true }).click();
-  await expect.poll(async () => (await draft(page)).design.photoHolder?.paperLayout).toBe('border');
-  await page.reload(); await expect(layouts.getByRole('button', { name: '拍立得白邊' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('group', { name: '相紙版面' })).toHaveCount(0);
+  await expect(page.getByLabel('照片立掛牌預覽')).toContainText('小相紙滿版');
   await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /拍立得/ }).click();
-  await expect(layouts).toHaveCount(0); await expect(page.getByLabel('照片立掛牌預覽')).toContainText('拍立得白邊');
+  await expect(page.getByLabel('照片立掛牌預覽')).toContainText('拍立得固定白邊');
+  await expect.poll(async () => (await draft(page)).design.orientation).toBe('portrait');
   await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /相紙/ }).click();
-  await layouts.getByRole('button', { name: '滿版', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.photoHolder?.paperLayout).toBe('full');
   await expect(page.locator('.holder-scene')).toHaveCount(1);
 });
@@ -608,6 +607,6 @@ test('fitted frames follow the printable page while natural flowers remain edita
   await page.screenshot({ path: 'test-results/natural-flowers-fitted-frame.png', fullPage: true });
   await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
   await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /拍立得/ }).click();
-  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(62);
-  frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame'); expect(frame).toMatchObject({ x: 17, y: 4, width: 62, height: 46 });
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(46);
+  frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame'); expect(frame).toMatchObject({ x: 4, y: 7, width: 46, height: 62 });
 });

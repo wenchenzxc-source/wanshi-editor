@@ -112,7 +112,7 @@ export function zones(d: Design, t: Template): Zone[] {
   return t.noProcess.map(z => d.orientation === 'portrait' ? z : { ...z, x: t.heightMm - z.y - z.height, y: z.x, width: z.height, height: z.width });
 }
 export function emptyDesign(template = templates[0]): Design {
-  return { schemaVersion: 1, id: crypto.randomUUID(), name: `我的 ${template.name}`, templateId: template.id, ...(template.sizes?.length ? { sizeId: template.sizes[0].id } : {}), orientation: 'portrait', ...(template.presentation === 'photo-holder' ? { photoHolder: { base: false, nfc: false, photoService: 'own' as const } } : {}), material: template.allowedMaterials?.[0] || 'white', printStack: 'white-cmyk', duplex: false, activeFace: 'front', printView: 'direct', background: '#faf6ef', backgroundOpacity: 1, layers: [], wooCommerceProductId: null, orderItemId: null };
+  return { schemaVersion: 1, id: crypto.randomUUID(), name: `我的 ${template.name}`, templateId: template.id, ...(template.sizes?.length ? { sizeId: template.sizes[0].id } : {}), orientation: 'portrait', ...(template.presentation === 'photo-holder' ? { photoHolder: { base: false, nfc: false, photoService: 'own' as const, paperLayout: 'full' as const } } : {}), material: template.allowedMaterials?.[0] || 'white', printStack: 'white-cmyk', duplex: false, activeFace: 'front', printView: 'direct', background: '#faf6ef', backgroundOpacity: 1, layers: [], wooCommerceProductId: null, orderItemId: null };
 }
 export function newLayer(kind: DesignLayer['kind'], patch: Partial<DesignLayer> = {}): DesignLayer {
   return { id: crypto.randomUUID(), name: kind === 'text' ? '文字' : kind === 'uv' ? 'UV 微浮雕' : '裝飾', kind, x: 30, y: 40, width: 50, height: 50, rotation: 0, opacity: 1, visible: true, locked: false, fill: '#b89571', shape: 'petal', ...patch };
@@ -138,15 +138,13 @@ export const badgeAccessories = [
 ] as const;
 export function badgeRadius(d: Design, t: Template) { return t.presentation === 'acrylic-badge' ? d.badgeCornerRadiusMm ?? t.cornerRadiusMm ?? 0 : 0; }
 
-// Paper-local image window; landscape rotates the whole paper clockwise.
+// Photo holders are portrait-only. Small photo paper prints edge-to-edge, while
+// Instax mini keeps its physical white border around the 46 × 62 mm image area.
 export function photoImageArea(d: Design, t: Template) {
   if (t.presentation !== 'photo-holder') return null;
   const paper = resolveTemplate(d, t);
   const mini = d.sizeId === 'instax-mini';
-  const area = mini ? { x: 4, y: 7, width: 46, height: 62 }
-    : d.photoHolder?.paperLayout === 'border' ? { x: 4, y: 7, width: paper.widthMm - 8, height: paper.heightMm - 24 }
-    : { x: 0, y: 0, width: paper.widthMm, height: paper.heightMm };
-  return d.orientation === 'portrait' ? area : { x: paper.heightMm - area.y - area.height, y: area.x, width: area.height, height: area.width };
+  return mini ? { x: 4, y: 7, width: 46, height: 62 } : { x: 0, y: 0, width: paper.widthMm, height: paper.heightMm };
 }
 
 export function fitFrames(d: Design, t: Template): Design {

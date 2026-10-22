@@ -24,10 +24,10 @@ export function useImages(assets: Asset[]) {
 }
 export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number };
 export type CropBox = { x: number; y: number; width: number; height: number };
-type Props = { cropBox?: CropBox | null; setCropBox?: (box: CropBox) => void; liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
+type Props = { photoAssetIds?: Set<string>; cropBox?: CropBox | null; setCropBox?: (box: CropBox) => void; liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
 type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
-export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox }: Props) {
+export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox, photoAssetIds }: Props) {
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
@@ -45,6 +45,17 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   const { w, h, fullW, fullH } = dimensions(design, template), b = template.bleedMm, pad = 12, requestedScale = 2.6 * zoom;
   const slot = slotGeometry(design, template), radius = badgeRadius(design, template);
   const current = design.layers.find(l => l.id === selected);
+  const isPhoto = (layer?: DesignLayer) => !!(photoArea && layer?.kind === 'image' && layer.assetId && photoAssetIds?.has(layer.assetId));
+  const currentPhoto = isPhoto(current);
+  function constrainPhoto(layer: DesignLayer, next: DesignLayer) {
+    if (!isPhoto(layer) || !photoArea) return next;
+    const image = layer.assetId ? images.get(layer.assetId) : undefined;
+    const ratio = image?.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : layer.width / layer.height;
+    const baseWidth = Math.max(photoArea.width, photoArea.height * ratio), baseHeight = baseWidth / ratio;
+    const zoom = Math.max(1, next.width / baseWidth, next.height / baseHeight);
+    const width = baseWidth * zoom, height = baseHeight * zoom;
+    return { ...next, x: Math.max(photoArea.x + photoArea.width - width, Math.min(photoArea.x, next.x)), y: photoArea.y + (photoArea.height - height) / 2, width, height, rotation: 0 };
+  }
   // Keep the product at the chosen zoom. Only the controls use a bounded proxy.
   const scale = requestedScale;
   const angle = (current?.rotation || 0) * Math.PI / 180;
@@ -54,16 +65,16 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   })) : [];
   const left = Math.min(...corners.map(p => p.x)), top = Math.min(...corners.map(p => p.y));
   const right = Math.max(...corners.map(p => p.x)), bottom = Math.max(...corners.map(p => p.y));
-  const bounded = !!current && current.visible && !current.locked && (left < 0 || top < 0 || right > fullW || bottom > fullH);
+  const bounded = !!current && !currentPhoto && current.visible && !current.locked && (left < 0 || top < 0 || right > fullW || bottom > fullH);
   const px = Math.max(0, Math.min(fullW - 1, left)), py = Math.max(0, Math.min(fullH - 1, top));
   const pw = Math.max(1, Math.min(fullW, right) - px), ph = Math.max(1, Math.min(fullH, bottom) - py);
   const stageW = (fullW + pad * 2) * scale, stageH = (fullH + pad * 2) * scale;
   useEffect(() => {
     if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
     const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
-    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint && !cropBox && !selectedIds.length ? [node] : []);
+    transformRef.current?.nodes(node && !currentPhoto && current?.visible && !current.locked && !disabled && !paint && !cropBox && !selectedIds.length ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, disabled, paint, cropBox, selectedIds, bounded, px, py, pw, ph]);
+  }, [selected, current, currentPhoto, disabled, paint, cropBox, selectedIds, bounded, px, py, pw, ph]);
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
@@ -135,12 +146,13 @@ export function EditorCanvas({ design, template, images, selected, select, commi
             {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
-              onClick={e => { if(e.evt.shiftKey)selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
-                if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}
+              onClick={e => { if(e.evt.shiftKey && !isPhoto(l))selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
+                if(isPhoto(l)){selectMany([]);select(l.id);}
+                else if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}
                 else{selectMany([]);select(l.id);}
               }}
-              onDragMove={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;for(const[id,p]of group.original){if(id!==l.id)nodes.current.get(id)?.position({x:p.x+dx,y:p.y+dy});}liveMany(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));}else{if(guides)snap(e.target);live(updated(l,e.target));} }}
-              onDragEnd={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;replaceLayers(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));liveMany(null);groupDrag.current=null;}else{commit(updated(l,e.target));live(null);setSnapLines({});} }}
+              onDragMove={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;for(const[id,p]of group.original){if(id!==l.id)nodes.current.get(id)?.position({x:p.x+dx,y:p.y+dy});}liveMany(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));}else{const next=constrainPhoto(l,updated(l,e.target));if(isPhoto(l))e.target.position({x:next.x,y:next.y});else if(guides)snap(e.target);live(next);} }}
+              onDragEnd={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;replaceLayers(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));liveMany(null);groupDrag.current=null;}else{commit(constrainPhoto(l,updated(l,e.target)));live(null);setSnapLines({});} }}
               onTransform={() => live(updated(l, nodes.current.get(l.id)!))}
               onTransformEnd={() => { const node = nodes.current.get(l.id)!; const next = updated(l, node); node.scale({ x: 1, y: 1 }); commit(next); live(null); }}
             />)}
