@@ -182,6 +182,13 @@ function App() {
     patchLayer({ x: chosen.x + localX * Math.cos(angle) - localY * Math.sin(angle), y: chosen.y + localX * Math.sin(angle) + localY * Math.cos(angle), width, height, cropX: undefined, cropY: undefined, cropWidth: undefined, cropHeight: undefined });
     setCropBox(null);
   };
+  const restoreImageRatio = () => {
+    if (chosen?.kind !== 'image' || !selectedAsset?.width || !selectedAsset.height) return;
+    const ratio = selectedAsset.width * (chosen.cropWidth ?? 1) / (selectedAsset.height * (chosen.cropHeight ?? 1));
+    const area = chosen.width * chosen.height, width = Math.sqrt(area * ratio), height = width / ratio;
+    const localX = (chosen.width - width) / 2, localY = (chosen.height - height) / 2, angle = chosen.rotation * Math.PI / 180;
+    patchLayer({ x: chosen.x + localX * Math.cos(angle) - localY * Math.sin(angle), y: chosen.y + localX * Math.sin(angle) + localY * Math.cos(angle), width, height });
+  };
   useEffect(() => {
     if (!cropBox) return;
     const keyboardCrop = (event: KeyboardEvent) => {
@@ -212,6 +219,7 @@ function App() {
       <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${(template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
+          <section className="image-transform-controls" aria-label="圖片自由變形"><div><b>自由變形</b><small>拖曳四邊可單獨拉寬或拉高；四角可同時改變長寬。</small></div><button type="button" disabled={!selectedAsset} onClick={restoreImageRatio}>恢復圖片比例</button></section>
           <ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/>
           <ImageAdjustments layer={chosen} patch={patchLayer}/>
           <button className="ai-button" disabled={!config?.backgroundRemoval} onClick={cutout}>✧ {config?.backgroundRemoval ? 'AI 一鍵去背' : 'AI 去背未啟用'}</button>

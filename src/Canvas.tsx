@@ -67,13 +67,13 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
-    const ratio = proxy.scaleX(), rotation = proxy.rotation(), a = rotation * Math.PI / 180;
-    const dx = (b + current.x - px) * ratio, dy = (b + current.y - py) * ratio;
+    const scaleX = proxy.scaleX(), scaleY = proxy.scaleY(), rotation = proxy.rotation(), a = rotation * Math.PI / 180;
+    const dx = (b + current.x - px) * scaleX, dy = (b + current.y - py) * scaleY;
     const next = { ...current, x: proxy.x() + dx * Math.cos(a) - dy * Math.sin(a) - b,
-      y: proxy.y() + dx * Math.sin(a) + dy * Math.cos(a) - b, width: current.width * ratio, height: current.height * ratio,
-      rotation: current.rotation + rotation, ...(current.kind === 'text' ? { fontSize: Math.max(1, (current.fontSize || 10) * ratio) } : {}) };
+      y: proxy.y() + dx * Math.sin(a) + dy * Math.cos(a) - b, width: current.width * scaleX, height: current.height * scaleY,
+      rotation: current.rotation + rotation, ...(current.kind === 'text' ? { fontSize: Math.max(1, (current.fontSize || 10) * scaleX) } : {}) };
     const node = nodes.current.get(current.id);
-    node?.setAttrs({ x: next.x, y: next.y, rotation: next.rotation, scaleX: ratio, scaleY: ratio });
+    node?.setAttrs({ x: next.x, y: next.y, rotation: next.rotation, scaleX, scaleY });
     if (done) {
       node?.scale({ x: 1, y: 1 }); proxy.scale({ x: 1, y: 1 }); proxy.rotation(0);
       commit(next); live(null);
@@ -171,7 +171,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
         <Group listening={false}>{selectedBounds.map(s=><Rect key={s.id} x={b+s.x} y={b+s.y} width={s.width} height={s.height} stroke="#245f52" strokeWidth={.55} dash={[2,1]}/>)}
           {marqueeBox&&<Rect x={b+marqueeBox.x} y={b+marqueeBox.y} width={marqueeBox.width} height={marqueeBox.height} fill={marqueeBox.crossing?'#65a77d26':'#5c91c626'} stroke={marqueeBox.crossing?'#397b50':'#376e9e'} strokeWidth={.55} dash={marqueeBox.crossing?[2,1]:undefined}/>}</Group>
         {bounded && <Rect ref={proxyRef} x={px} y={py} width={pw} height={ph} listening={false} onTransform={() => transformProxy()} onTransformEnd={() => transformProxy(true)}/>}
-        <Transformer ref={transformRef} flipEnabled={false} keepRatio={true} rotateAnchorOffset={26} anchorSize={12} anchorCornerRadius={3} borderStroke="#255f55" anchorStroke="#255f55" anchorFill="#ffffff" enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']} boundBoxFunc={(old, next) => Math.abs(next.width) < 8 || Math.abs(next.height) < 8 || Math.abs(next.width) > 2500 || Math.abs(next.height) > 2500 ? old : next}/>
+        <Transformer ref={transformRef} flipEnabled={false} keepRatio={current?.kind !== 'image'} rotateAnchorOffset={26} anchorSize={12} anchorCornerRadius={3} borderStroke="#255f55" anchorStroke="#255f55" anchorFill="#ffffff" enabledAnchors={current?.kind === 'image' ? ['top-left', 'top-center', 'top-right', 'middle-left', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'] : ['top-left', 'top-right', 'bottom-left', 'bottom-right']} boundBoxFunc={(old, next) => Math.abs(next.width) < 8 || Math.abs(next.height) < 8 || Math.abs(next.width) > 2500 || Math.abs(next.height) > 2500 ? old : next}/>
       </Group></Layer>
     </Stage>
     {paint && !disabled && <div aria-label="繪畫區" style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'crosshair' }}
