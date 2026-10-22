@@ -1,10 +1,18 @@
 # 萬事造物｜獨立商品編輯器
 
+[▶ **開啟 GitHub 線上預覽**](https://wenchenzxc-source.github.io/wanshi-editor/)
+
+[![GitHub Pages 部署狀態](https://github.com/wenchenzxc-source/wanshi-editor/actions/workflows/pages.yml/badge.svg)](https://github.com/wenchenzxc-source/wanshi-editor/actions/workflows/pages.yml)
+
 React + TypeScript + React Konva 編輯器，搭配 Express 私有 API。此專案獨立於旁邊的商城原型，不包含商城、付款或物流。
 
 ## GitHub 線上預覽
 
-推送 `main` 後，GitHub Actions 會自動建置並部署可操作的 Pages 預覽。預覽網址為 `https://wenchenzxc-source.github.io/wanshi-editor/`。線上預覽支援商品切換、直橫式、上傳、排版、素材及瀏覽器本機儲存；資料只留在該瀏覽器的 IndexedDB。確認製作包、正式購物車、AI 去背與私有跨裝置儲存仍需 Express 伺服器，因此在 Pages 預覽中明確停用。
+在 GitHub 專案首頁打開 `README.md`，點最上方的「開啟 GitHub 線上預覽」即可進入。推送 `main` 後，GitHub Actions 會自動建置並部署可操作的 Pages 預覽；旁邊的部署狀態徽章可用來查看建置是否成功。
+
+若預覽尚未出現，請先到 GitHub 專案的 **Settings → Pages**，確認 **Source** 設為 **GitHub Actions**，再到 **Actions → Deploy interactive preview to GitHub Pages** 執行一次 **Run workflow**。預覽網址為 [https://wenchenzxc-source.github.io/wanshi-editor/](https://wenchenzxc-source.github.io/wanshi-editor/)。
+
+線上預覽支援商品切換、直橫式、上傳、排版、素材及瀏覽器本機儲存；資料只留在該瀏覽器的 IndexedDB。確認製作包、正式購物車、AI 去背與私有跨裝置儲存仍需 Express 伺服器，因此在 Pages 預覽中明確停用。
 
 ## 安裝與執行
 
