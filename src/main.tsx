@@ -240,6 +240,7 @@ function App() {
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
           {chosenIsPhoto && selectedAsset ? <PhotoImageControls layer={chosen} asset={selectedAsset} design={design} template={template} patch={patchLayer}/> : <><section className="image-transform-controls" aria-label="圖片自由變形"><div><b>自由變形</b><small>拖曳四邊可單獨拉寬或拉高；四角可同時改變長寬。</small></div><button type="button" disabled={!selectedAsset} onClick={restoreImageRatio}>恢復圖片比例</button></section><ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/></>}
+          <ImageCornerControls layer={chosen} patch={patchLayer}/>
           <ImageAdjustments layer={chosen} patch={patchLayer}/>
           <button className="ai-button" disabled={!config?.backgroundRemoval} onClick={cutout}>✧ {config?.backgroundRemoval ? 'AI 一鍵去背' : 'AI 去背未啟用'}</button>
           <small className="muted">{config?.backgroundRemoval ? '將圖片送往 remove.bg 處理；原圖完整保留。' : '需在伺服器設定 remove.bg 金鑰。'}</small>
@@ -316,6 +317,19 @@ function PhotoImageControls({ layer, asset, design, template, patch }: { layer: 
     <label>左右位置 <output>{position === 0 ? '置中' : position < 0 ? `左 ${Math.abs(position)}%` : `右 ${position}%`}</output><input aria-label="照片左右位置" type="range" min="-100" max="100" step="1" value={position} onChange={e => setPosition(+e.target.value)}/></label>
     <label>放大 <output>{zoom}%</output><input aria-label="照片放大" type="range" min="100" max="300" step="1" value={zoom} onChange={e => setZoom(+e.target.value)}/></label>
     <small>採用類似 mini Link 的取景邏輯：照片保持原比例並鋪滿{design.sizeId === 'instax-mini' ? '拍立得影像區' : '整張相紙'}。可直接左右拖曳；垂直位置、旋轉與縮小已固定。</small>
+  </section>;
+}
+function ImageCornerControls({ layer, patch }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void }) {
+  const maxRadius = Math.min(layer.width, layer.height) / 2;
+  const radius = Math.min(layer.cornerRadiusMm ?? 0, maxRadius);
+  const displayRadius = Math.round(radius * 10) / 10;
+  const setRadius = (value: number) => patch({ cornerRadiusMm: Math.max(0, Math.min(maxRadius, value)) });
+  const presets = [0, 2, 4, 8, maxRadius].filter((value, index, values) => value <= maxRadius && values.indexOf(value) === index);
+  return <section className="image-corner-controls" aria-label="圖片 R 角">
+    <div className="image-adjustment-heading"><b>圖片 R 角</b><output>{radius ? `R${displayRadius} mm` : '直角'}</output></div>
+    <div className="corner-radius-input"><Numeric label="半徑 (mm)" value={radius} min={0} max={maxRadius} step={0.1} onChange={setRadius}/><input aria-label="R 角滑桿" type="range" min="0" max={maxRadius} step="0.1" value={radius} onChange={e => setRadius(+e.target.value)}/></div>
+    <div className="corner-radius-presets" role="group" aria-label="常用 R 角">{presets.map(value => <button type="button" key={value} className={Math.abs(radius - value) < .05 ? 'active' : ''} onClick={() => setRadius(value)}>{value === 0 ? '直角' : value === maxRadius ? '全圓' : `R${value}`}</button>)}</div>
+    <small>每張圖片可獨立設定；畫布、成品預覽與輸出檔會同步套用。</small>
   </section>;
 }
 function ImageAdjustments({ layer, patch }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void }) {

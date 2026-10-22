@@ -20,6 +20,7 @@ export const layerSchema = z.object({
   contrast: z.number().min(0.25).max(2).optional(),
   saturation: z.number().min(0).max(2).optional(),
   blurMm: z.number().min(0).max(10).optional(),
+  cornerRadiusMm: z.number().min(0).max(500).optional(),
   cropX: z.number().min(0).max(1).optional(),
   cropY: z.number().min(0).max(1).optional(),
   cropWidth: z.number().positive().max(1).optional(),

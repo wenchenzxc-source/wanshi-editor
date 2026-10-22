@@ -61,8 +61,9 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
       ...(l.blurMm ? [`blur(${l.blurMm * renderScale}px)`] : []),
     ];
     ctx.filter = filters.join(' ');
-    // A blur expands beyond the image edge; keep it inside the selected picture box.
-    ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
+    // Keep blur and rounded corners inside the selected picture box.
+    const cornerRadius = Math.max(0, Math.min(l.cornerRadiusMm ?? 0, l.width / 2, l.height / 2));
+    ctx.beginPath(); ctx.roundRect(0, 0, l.width, l.height, cornerRadius); ctx.clip();
     const crop = imageCropRect(l, image);
     if (crop) ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, l.width, l.height);
     else ctx.drawImage(image, 0, 0, l.width, l.height);
