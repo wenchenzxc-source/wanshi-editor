@@ -311,10 +311,11 @@ function PhotoImageControls({ layer, asset, design, template, patch }: { layer: 
     patch({ x: minX + (maxX - minX) * progress, y: area.y + (area.height - layer.height) / 2, rotation: 0 });
   };
   return <section className="photo-image-controls" aria-label="照片取景">
-    <div className="image-adjustment-heading"><b>照片取景</b><button type="button" disabled={zoom === 100 && Math.abs(position) < 2} onClick={() => patch(fitPhotoImageLayer(layer, asset, design, template, true))}>置中重設</button></div>
+    <div className="photo-fit-status"><span aria-hidden="true">✓</span><b>已自動吸附{design.sizeId === 'instax-mini' ? '拍立得影像框' : '相紙滿版框'}</b></div>
+    <div className="image-adjustment-heading"><b>照片取景</b><button type="button" disabled={zoom === 100 && Math.abs(position) < 2} onClick={() => patch(fitPhotoImageLayer(layer, asset, design, template, true))}>重新吸附</button></div>
     <label>左右位置 <output>{position === 0 ? '置中' : position < 0 ? `左 ${Math.abs(position)}%` : `右 ${position}%`}</output><input aria-label="照片左右位置" type="range" min="-100" max="100" step="1" value={position} onChange={e => setPosition(+e.target.value)}/></label>
     <label>放大 <output>{zoom}%</output><input aria-label="照片放大" type="range" min="100" max="300" step="1" value={zoom} onChange={e => setZoom(+e.target.value)}/></label>
-    <small>照片會保持原比例並鋪滿{design.sizeId === 'instax-mini' ? '拍立得影像區' : '整張相紙'}。可直接左右拖曳；垂直位置、旋轉與縮小已固定。</small>
+    <small>採用類似 mini Link 的取景邏輯：照片保持原比例並鋪滿{design.sizeId === 'instax-mini' ? '拍立得影像區' : '整張相紙'}。可直接左右拖曳；垂直位置、旋轉與縮小已固定。</small>
   </section>;
 }
 function ImageAdjustments({ layer, patch }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void }) {
