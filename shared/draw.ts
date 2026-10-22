@@ -24,7 +24,7 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
 import { getFont } from './fonts';
 import { drawFrame } from './frame';
 export const FONT = 'Wanshi Sans';
-export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview') {
+export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview', renderScale = 1) {
   if (!l.visible || (mode === 'mask' && l.kind !== 'uv') || (mode === 'production' && l.kind === 'uv')) return;
   ctx.save();
   for (const hole of l.erasures || []) {
@@ -43,7 +43,18 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
   }
   else if (l.kind === 'shape' && l.petalPose) drawFloatingPetal(ctx, l);
   else if (l.kind === 'frame') drawFrame(ctx, l);
-  else if (l.kind === 'image' && image) ctx.drawImage(image, 0, 0, l.width, l.height);
+  else if (l.kind === 'image' && image) {
+    const filters = [
+      `brightness(${l.brightness ?? 1})`,
+      `contrast(${l.contrast ?? 1})`,
+      `saturate(${l.saturation ?? 1})`,
+      ...(l.blurMm ? [`blur(${l.blurMm * renderScale}px)`] : []),
+    ];
+    ctx.filter = filters.join(' ');
+    // A blur expands beyond the image edge; keep it inside the selected picture box.
+    ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
+    ctx.drawImage(image, 0, 0, l.width, l.height);
+  }
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;
     ctx.font = `${size}px "${getFont(l.fontId).family}", "${FONT}"`; ctx.textBaseline = 'top';
@@ -77,7 +88,7 @@ export function drawDesign(ctx: CanvasRenderingContext2D, d: Design, t: Template
   if (radius) { ctx.beginPath(); ctx.roundRect(b, b, w, h, radius); ctx.clip(); }
   if (mode !== 'mask' && (mode === 'preview' || !d.material || t.presentation === 'photo-holder')) drawSubstrate(ctx, d, bleed ? fullW : w, bleed ? fullH : h, t.presentation === 'acrylic-badge' ? 0.035 : 0.16);
   ctx.translate(b, b);
-  for (const l of d.layers.filter(l => (l.face || 'front') === (!d.printStack && d.duplex ? d.activeFace || 'front' : 'front'))) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode); ctx.restore(); }
+  for (const l of d.layers.filter(l => (l.face || 'front') === (!d.printStack && d.duplex ? d.activeFace || 'front' : 'front'))) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rotation * Math.PI / 180); drawLayer(ctx, l, images.get(l.assetId || ''), mode, scale); ctx.restore(); }
   if (mode === 'preview' && d.printView === 'acrylic') {
     const gloss = ctx.createLinearGradient(0, 0, w, h); gloss.addColorStop(0, '#ffffff55'); gloss.addColorStop(.45, '#ffffff08'); gloss.addColorStop(.5, '#ffffff35'); gloss.addColorStop(1, '#ffffff00'); ctx.fillStyle = gloss; ctx.fillRect(0, 0, w, h);
   }

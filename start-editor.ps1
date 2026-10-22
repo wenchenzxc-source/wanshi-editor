@@ -2,7 +2,7 @@
 $editorRoot = $PSScriptRoot
 $editorUrl = 'http://127.0.0.1:4310/'
 function Test-Editor {
-    try { return (Invoke-RestMethod -Uri ($editorUrl + 'api/health') -TimeoutSec 2).apiVersion -eq 'cad-selection-v18' } catch { return $false }
+    try { return (Invoke-RestMethod -Uri ($editorUrl + 'api/health') -TimeoutSec 2).apiVersion -eq 'image-adjustments-v19' } catch { return $false }
 }
 if (-not (Test-Editor)) {
     $editorPortInUse = Get-NetTCPConnection -LocalPort 4310 -State Listen -ErrorAction SilentlyContinue

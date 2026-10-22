@@ -117,7 +117,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
           <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
             {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
-              sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''))}
+              sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
               onClick={e => { if(e.evt.shiftKey)selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
                 if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}

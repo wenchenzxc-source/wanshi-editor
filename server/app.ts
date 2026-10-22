@@ -32,7 +32,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'cad-selection-v18' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'image-adjustments-v19' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (existing && await store.get('sessions', hash(existing))) return res.json({ ok: true });
