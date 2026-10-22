@@ -4,7 +4,7 @@ import { PrintStackPicker } from './PrintStackPicker';
 import { fonts, getFont, type FontId } from '../shared/fonts';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, ApiError } from './api';
+import { api, ApiError, uploadAssets } from './api';
 import { type CropBox, type PaintTool, EditorCanvas, Preview, useImages } from './Canvas';
 import { LayerWindow } from './LayerWindow';
 import { ProductScene } from './ProductScene';
@@ -18,7 +18,7 @@ import { Cart, type CartItem } from './Cart';
 import { assetUrl, publicUrl, staticDemo } from './urls';
 
 type Loaded = { design: Design; revision: number; assets: Asset[]; versions: VersionInfo[] };
-type Config = { templates: Template[]; backgroundRemoval: boolean };
+type Config = { templates: Template[]; backgroundRemoval: boolean; directUpload?: boolean };
 type Saved = { id: string; name: string; updatedAt: string };
 function fitPhotoImageLayer(layer: DesignLayer, asset: Pick<Asset, 'width' | 'height'>, design: Design, template: Template, reset = false) {
   const area = photoImageArea(design, template);
@@ -133,8 +133,7 @@ function App() {
   async function upload(files: FileList | File[]) {
     if (!files.length || busy) return;
     await run(async () => {
-      const form = new FormData(); for (const f of Array.from(files)) form.append('files', f);
-      const list = await api<Asset[]>(`/designs/${design!.id}/assets`, { method: 'POST', body: form }); setAssets(a => [...a, ...list]);
+      const list = await uploadAssets<Asset[]>(design!.id, Array.from(files), config?.directUpload); setAssets(a => [...a, ...list]);
       const layers = list.map((a, i) => { const layer = newLayer('image', { name: a.originalName, assetId: a.id, face, x: 20 + i * 7, y: 25 + i * 7, width: 85, height: 85 * a.height / a.width }); return template?.presentation === 'photo-holder' ? fitPhotoImageLayer(layer, a, design!, template, true) : fitNewLayer(layer); });
       change({ ...designRef.current!, layers: [...designRef.current!.layers, ...layers] }); setSelected(layers.at(-1)!.id);
       await save(designRef.current);

@@ -3,11 +3,11 @@ import multer from 'multer';
 import sharp from 'sharp';
 import archiver from 'archiver';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { writeFile, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
-import { Store } from './store';
+import { configuredStore, type StoreLike } from './store';
 import { fontPath, registerFont, render } from './render';
 import { fonts } from '../shared/fonts';
 import { artCatalog } from '../shared/artwork';
@@ -18,8 +18,9 @@ type Snapshot = Draft & { id: string; createdAt: string; template: Template; ass
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 const hash = (v: string | Buffer) => createHash('sha256').update(v).digest('hex');
 const idSchema = z.string().uuid();
-export async function createApp(dataDir: string, options: { templates?: Template[] } = {}) {
-  const app = express(), store = new Store(dataDir), catalog = options.templates || templates;
+const previewBytes = (bytes: Buffer) => sharp(bytes).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 90 }).toBuffer();
+export async function createApp(dataDir: string, options: { templates?: Template[]; store?: StoreLike } = {}) {
+  const app = express(), store = options.store || configuredStore(dataDir), catalog = options.templates || templates;
   await store.init(); registerFont();
   app.disable('x-powered-by');
   app.use('/api', (req, res, next) => {
@@ -79,7 +80,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (d.badgeAccessory === 'none' && d.slot?.enabled) throw new HttpError(400, '無配件款不可附帶孔槽');
     for (const l of d.layers) if (l.assetId) { const a = await ownedAsset(l.assetId, owner); if (a.designId !== d.id) throw new HttpError(400, '素材不屬於此設計'); }
   };
-  app.get('/api/config', (_req, res) => res.json({ templates: catalog, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024 }));
+  app.get('/api/config', (_req, res) => res.json({ templates: catalog, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024, directUpload: Boolean(store.createSignedUploadUrl) }));
   app.get('/api/font', (_req, res) => res.sendFile(fontPath));
   app.get('/api/designs', async (_req, res) => res.json((await store.list<Draft>('drafts')).filter(d => d.owner === res.locals.owner).map(d => ({ id: d.design.id, name: d.design.name, updatedAt: d.updatedAt }))));
   app.post('/api/designs', async (req, res) => {
@@ -101,7 +102,10 @@ export async function createApp(dataDir: string, options: { templates?: Template
       if (old.revision !== input.baseRevision) throw new HttpError(409, '其他分頁已更新此設計，請重新開啟，避免覆蓋變更');
       await validateDesign(input.design, old.owner);
       const draft = { ...old, design: input.design, revision: old.revision + 1, updatedAt: new Date().toISOString() };
-      await store.put('drafts', req.params.id, draft); res.json({ revision: draft.revision });
+      if (store.compareAndSwapDraft) {
+        if (!await store.compareAndSwapDraft(req.params.id, old.owner, input.baseRevision, draft)) throw new HttpError(409, '其他分頁已更新此設計，請重新開啟，避免覆蓋變更');
+      } else await store.put('drafts', req.params.id, draft);
+      res.json({ revision: draft.revision });
     });
   });
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 12 } });
@@ -118,13 +122,56 @@ export async function createApp(dataDir: string, options: { templates?: Template
       return { asset, bytes: f.buffer };
       } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, '圖片無法解碼、檔案損毀或超過 40MP，請使用有效的 JPG、PNG、WebP'); }
     }));
-    for (const p of prepared) { await writeFile(store.file('files', p.asset.id, 'bin'), p.bytes, { flag: 'wx' }); await store.put('assets', p.asset.id, p.asset, true); }
+    for (const p of prepared) { await store.writeBlob('files', p.asset.id, 'bin', p.bytes, true, p.asset.mime); if (store.signedDownloadUrl) await store.writeBlob('previews', p.asset.id, 'webp', await previewBytes(p.bytes), true, 'image/webp'); await store.put('assets', p.asset.id, p.asset, true); }
     res.status(201).json(prepared.map(({ asset: { owner: _, ...a } }) => a));
+  });
+  type UploadIntent = { id: string; owner: string; designId: string; originalName: string; mime: string; size: number; expiresAt: string; completedAt?: string };
+  app.post('/api/designs/:id/assets/upload-intents', async (req, res) => {
+    if (!store.createSignedUploadUrl) throw new HttpError(404, '此環境未啟用直接上傳');
+    const draft = await owned(String(req.params.id), res.locals.owner);
+    const input = z.object({ files: z.array(z.object({ name: z.string().min(1).max(160), mime: z.enum(['image/jpeg', 'image/png', 'image/webp']), size: z.number().int().positive().max(20 * 1024 * 1024) })).min(1).max(12) }).parse(req.body);
+    const intents = await Promise.all(input.files.map(async file => {
+      const id = randomUUID();
+      const intent: UploadIntent = { id, owner: draft.owner, designId: draft.design.id, originalName: file.name, mime: file.mime, size: file.size, expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() };
+      await store.put('upload-intents', id, intent, true);
+      const signed = await store.createSignedUploadUrl!('files', id, 'bin');
+      return { id, signedUrl: signed.signedUrl };
+    }));
+    res.status(201).json(intents);
+  });
+  app.post('/api/designs/:id/assets/complete', async (req, res) => {
+    const draft = await owned(String(req.params.id), res.locals.owner);
+    const { ids } = z.object({ ids: z.array(idSchema).min(1).max(12) }).parse(req.body);
+    const assets = await Promise.all(ids.map(async id => {
+      const intent = await store.get<UploadIntent>('upload-intents', id);
+      if (!intent || intent.owner !== draft.owner || intent.designId !== draft.design.id) throw new HttpError(404, '找不到上傳工作');
+      if (intent.completedAt) return ownedAsset(id, draft.owner);
+      if (Date.parse(intent.expiresAt) < Date.now()) throw new HttpError(410, '上傳連結已過期，請重新選擇圖片');
+      const bytes = await store.readBlob('files', id, 'bin');
+      try {
+        if (!bytes.length || bytes.length > 20 * 1024 * 1024 || bytes.length !== intent.size) throw new HttpError(400, '上傳檔案大小不符');
+        const meta = await sharp(bytes, { limitInputPixels: 40_000_000 }).metadata();
+        if (!['jpeg', 'png', 'webp'].includes(meta.format || '') || (meta.pages || 1) > 1) throw new HttpError(400, '只接受非動畫 JPG、PNG、WebP 圖片');
+        await sharp(bytes, { limitInputPixels: 40_000_000 }).resize(1, 1).toBuffer();
+        const swap = [5, 6, 7, 8].includes(meta.orientation || 1);
+        const asset: PrivateAsset = { id, designId: draft.design.id, owner: draft.owner, originalName: intent.originalName, mime: `image/${meta.format}`, width: (swap ? meta.height : meta.width)!, height: (swap ? meta.width : meta.height)!, sha256: hash(bytes), variant: 'original' };
+        await store.writeBlob('previews', id, 'webp', await previewBytes(bytes), true, 'image/webp');
+        await store.put('assets', id, asset, true); await store.put('upload-intents', id, { ...intent, completedAt: new Date().toISOString() });
+        return asset;
+      } catch (error) {
+        await store.deleteBlob('files', id, 'bin').catch(() => {});
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(400, '圖片無法解碼、檔案損毀或超過 40MP，請使用有效的 JPG、PNG、WebP');
+      }
+    }));
+    res.status(201).json(assets.map(({ owner: _, ...asset }) => asset));
   });
   app.get('/api/assets/:id', async (req, res) => {
     const a = await ownedAsset(req.params.id, res.locals.owner);
-    if (req.query.original === '1') { res.type(a.mime); return res.sendFile(store.file('files', a.id, 'bin')); }
-    res.type('png').send(await sharp(store.file('files', a.id, 'bin')).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).png().toBuffer());
+    if (store.signedDownloadUrl) return res.redirect(302, await store.signedDownloadUrl(req.query.original === '1' ? 'files' : 'previews', a.id, req.query.original === '1' ? 'bin' : 'webp', 300));
+    const source = await store.readBlob('files', a.id, 'bin');
+    if (req.query.original === '1') { res.type(a.mime); return res.send(source); }
+    res.type('png').send(await sharp(source).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).png().toBuffer());
   });
   app.delete('/api/assets/:id', async (req, res) => {
     await store.exclusive(`asset-${req.params.id}`, async () => {
@@ -137,13 +184,13 @@ export async function createApp(dataDir: string, options: { templates?: Template
   app.post('/api/assets/:id/remove-background', async (req, res) => {
     const a = await ownedAsset(req.params.id, res.locals.owner);
     if (!process.env.REMOVEBG_API_KEY) throw new HttpError(503, 'AI 去背未啟用：伺服器尚未設定 remove.bg API 金鑰');
-    const form = new FormData(); form.append('image_file', new Blob([new Uint8Array(await readFile(store.file('files', a.id, 'bin')))], { type: a.mime }), 'image'); form.append('size', 'auto');
+    const form = new FormData(); form.append('image_file', new Blob([new Uint8Array(await store.readBlob('files', a.id, 'bin'))], { type: a.mime }), 'image'); form.append('size', 'auto');
     const upstream = await fetch('https://api.remove.bg/v1.0/removebg', { method: 'POST', headers: { 'X-Api-Key': process.env.REMOVEBG_API_KEY }, body: form, signal: AbortSignal.timeout(60000) });
     if (!upstream.ok) throw new HttpError(502, `去背服務失敗 (${upstream.status})，原圖已保留`);
     const raw = Buffer.from(await upstream.arrayBuffer());
     const bytes = await sharp(raw, { limitInputPixels: 40_000_000 }).png().toBuffer(), m = await sharp(bytes).metadata();
     const cutout = { ...a, deletedAt: undefined, id: randomUUID(), mime: 'image/png', width: m.width!, height: m.height!, sha256: hash(bytes), sourceAssetId: a.id, variant: 'cutout' as const };
-    await writeFile(store.file('files', cutout.id, 'bin'), bytes, { flag: 'wx' }); await store.put('assets', cutout.id, cutout, true);
+    await store.writeBlob('files', cutout.id, 'bin', bytes, true, cutout.mime); if (store.signedDownloadUrl) await store.writeBlob('previews', cutout.id, 'webp', await previewBytes(bytes), true, 'image/webp'); await store.put('assets', cutout.id, cutout, true);
     const { owner: _, ...result } = cutout; res.json(result);
   });
   app.post('/api/designs/:id/confirm', async (req, res) => {
@@ -158,14 +205,14 @@ export async function createApp(dataDir: string, options: { templates?: Template
       const front = { ...v.design, activeFace: 'front' as const };
       const preview = await render(front, v.template, v.assets, store, 'preview', false);
       const production = await render(front, v.template, v.assets, store, 'production');
-      await writeFile(store.file('files', `${v.id}-preview`, 'png'), preview, { flag: 'wx' });
-      await writeFile(store.file('files', `${v.id}-production`, 'png'), production, { flag: 'wx' });
-      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) await writeFile(store.file('files', `${v.id}-mask`, 'png'), await render(front, v.template, v.assets, store, 'mask'), { flag: 'wx' });
+      await store.writeBlob('files', `${v.id}-preview`, 'png', preview, true, 'image/png');
+      await store.writeBlob('files', `${v.id}-production`, 'png', production, true, 'image/png');
+      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) await store.writeBlob('files', `${v.id}-mask`, 'png', await render(front, v.template, v.assets, store, 'mask'), true, 'image/png');
       if (v.design.duplex && !v.design.printStack) {
         const back = { ...v.design, activeFace: 'back' as const };
         for (const mode of ['preview', 'production', 'mask'] as const) {
           if (mode === 'mask' && !back.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) continue;
-          await writeFile(store.file('files', `${v.id}-back-${mode}`, 'png'), await render(back, v.template, v.assets, store, mode, mode !== 'preview'), { flag: 'wx' });
+          await store.writeBlob('files', `${v.id}-back-${mode}`, 'png', await render(back, v.template, v.assets, store, mode, mode !== 'preview'), true, 'image/png');
         }
       }
       await store.put('versions', v.id, v, true);
@@ -214,16 +261,22 @@ export async function createApp(dataDir: string, options: { templates?: Template
     const buffer = artwork.file ? await readFile(path.resolve('public/artwork', artwork.file)) : await sharp(Buffer.from(artwork.svg!)).resize(1600, 1600).png().toBuffer();
     const metadata = await sharp(buffer).metadata();
     const asset: PrivateAsset = { id: randomUUID(), designId: draft.design.id, owner: res.locals.owner, libraryArtworkId: artwork.id, originalName: `${artwork.name}.png`, mime: 'image/png', width: metadata.width!, height: metadata.height!, sha256: hash(buffer), variant: 'original' };
-    await writeFile(store.file('files', asset.id, 'bin'), buffer, { flag: 'wx' });
+    await store.writeBlob('files', asset.id, 'bin', buffer, true, asset.mime); if (store.signedDownloadUrl) await store.writeBlob('previews', asset.id, 'webp', await previewBytes(buffer), true, 'image/webp');
     await store.put('assets', asset.id, asset, true);
     const { owner: _, ...publicAsset } = asset; res.status(201).json(publicAsset);
   });
   app.get('/api/versions/:id', async (req, res) => { const { owner: _, ...v } = await snapshot(req.params.id, res.locals.owner); res.json(v); });
-  app.get('/api/versions/:id/preview.png', async (req, res) => { const v = await snapshot(req.params.id, res.locals.owner); res.type('png').sendFile(store.file('files', `${v.id}-preview`, 'png')); });
+  app.get('/api/versions/:id/preview.png', async (req, res) => {
+    const v = await snapshot(req.params.id, res.locals.owner);
+    if (store.signedDownloadUrl) return res.redirect(302, await store.signedDownloadUrl('files', `${v.id}-preview`, 'png', 300));
+    res.type('png').send(await store.readBlob('files', `${v.id}-preview`, 'png'));
+  });
   app.get('/api/versions/:id/package.zip', async (req, res) => {
     const v = await snapshot(req.params.id, res.locals.owner);
-    res.attachment(`wanshi-${v.id}.zip`);
-    const zip = archiver('zip', { zlib: { level: 6 } }); zip.on('error', e => res.destroy(e)); zip.pipe(res);
+    const cloud = Boolean(store.signedDownloadUrl), chunks: Buffer[] = [];
+    const zip = archiver('zip', { zlib: { level: 6 } });
+    const collected = cloud ? new Promise<void>((resolve, reject) => { zip.on('data', chunk => chunks.push(Buffer.from(chunk))); zip.on('end', resolve); zip.on('error', reject); }) : Promise.resolve();
+    if (!cloud) { res.attachment(`wanshi-${v.id}.zip`); zip.on('error', e => res.destroy(e)); zip.pipe(res); }
     zip.append(JSON.stringify(v.design, null, 2), { name: 'design.json' });
     if ((v.assets.some(a => a.libraryArtworkId) || v.design.layers.some(l => l.kind === 'frame'))) zip.append('萬事造物素材：包含原創向量及 AI 生成透明花材，可用於本工作室及客戶的設計、修改與商品製作；不宣稱排他權利。素材 ID 與原圖 SHA-256 見 manifest.json。', { name: 'artwork-license.txt' });
     const usedFonts = fonts.filter(f => v.design.layers.some(l => l.kind === 'text' && (l.fontId || 'sans') === f.id));
@@ -231,22 +284,27 @@ export async function createApp(dataDir: string, options: { templates?: Template
     for (const font of usedFonts) zip.file(path.join(path.dirname(fontPath), font.file), { name: `fonts/${font.file}` });
     for (const license of new Set(usedFonts.map(f => f.license))) zip.file(path.join(path.dirname(fontPath), license), { name: `fonts/${license}` });
     zip.append(JSON.stringify({ versionId: v.id, createdAt: v.createdAt, revision: v.revision, template: v.template, assets: v.assets, wooCommerceProductId: v.design.wooCommerceProductId, orderItemId: v.design.orderItemId, units: 'mm', origin: 'trim-top-left', uv: 'grayscale: black=none, white=full; preview is conceptual' }, null, 2), { name: 'manifest.json' });
-    zip.file(store.file('files', `${v.id}-preview`, 'png'), { name: 'final-preview.png' });
-    if (!v.design.photoHolder || v.design.photoHolder.photoService === 'print') zip.file(store.file('files', `${v.id}-production`, 'png'), { name: v.design.photoHolder ? 'photo-print.png' : 'production-with-bleed.png' });
-    if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) zip.file(store.file('files', `${v.id}-mask`, 'png'), { name: 'uv-mask.png' });
+    zip.append(await store.readBlob('files', `${v.id}-preview`, 'png'), { name: 'final-preview.png' });
+    if (!v.design.photoHolder || v.design.photoHolder.photoService === 'print') zip.append(await store.readBlob('files', `${v.id}-production`, 'png'), { name: v.design.photoHolder ? 'photo-print.png' : 'production-with-bleed.png' });
+    if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) zip.append(await store.readBlob('files', `${v.id}-mask`, 'png'), { name: 'uv-mask.png' });
     if (v.design.duplex && !v.design.printStack) {
-      zip.file(store.file('files', `${v.id}-back-preview`, 'png'), { name: 'back-final-preview.png' });
-      zip.file(store.file('files', `${v.id}-back-production`, 'png'), { name: 'back-production-with-bleed.png' });
-      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) zip.file(store.file('files', `${v.id}-back-mask`, 'png'), { name: 'back-uv-mask.png' });
+      zip.append(await store.readBlob('files', `${v.id}-back-preview`, 'png'), { name: 'back-final-preview.png' });
+      zip.append(await store.readBlob('files', `${v.id}-back-production`, 'png'), { name: 'back-production-with-bleed.png' });
+      if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) zip.append(await store.readBlob('files', `${v.id}-back-mask`, 'png'), { name: 'back-uv-mask.png' });
     }
     const slot = slotGeometry(v.design, v.template), physical = dimensions(v.design, v.template);
     if (v.design.photoHolder) zip.append(JSON.stringify({ product: '照片立／掛牌', paper: v.template.sizes?.find(s => s.id === v.design.sizeId)?.name, paperSizeMm: { width: physical.w, height: physical.h }, imageAreaMm: photoImageArea(v.design, v.template), paperLayout: v.design.sizeId === 'instax-mini' ? 'instax-border' : v.design.photoHolder.paperLayout || 'full', photoService: v.design.photoHolder.photoService, printPhoto: v.design.photoHolder.photoService === 'print', desktopBase: v.design.photoHolder.base, rearNfc: v.design.photoHolder.nfc, nfcProgramming: v.design.photoHolder.nfc ? 'to-be-configured' : 'not-included', frameDimensionsMm: null, frameDimensionsStatus: 'awaiting-confirmation', preview: 'paper artwork only; frame illustration is not a manufacturing outline' }, null, 2), { name: 'photo-holder-options.json' });
     if (slot) zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/></svg>`, { name: 'slot-cut-path.svg' });
     if (v.template.presentation === 'acrylic-badge') zip.append(`<svg xmlns="http://www.w3.org/2000/svg" width="${physical.w}mm" height="${physical.h}mm" viewBox="0 0 ${physical.w} ${physical.h}"><rect x="0" y="0" width="${physical.w}" height="${physical.h}" rx="${badgeRadius(v.design, v.template)}" fill="none" stroke="#000000" stroke-width="0.1"/>${slot ? `<rect x="${slot.x}" y="${slot.y}" width="${slot.width}" height="${slot.height}" rx="${slot.radius}" fill="none" stroke="#ff0000" stroke-width="0.1"/>` : ''}</svg>`, { name: 'badge-cut-path.svg' });
     zip.append(JSON.stringify({ ...(v.design.photoHolder ? { photoHolder: v.design.photoHolder, dimensionScope: 'photo-paper', frameDimensionsMm: null, printPhoto: v.design.photoHolder.photoService === 'print' } : {}), badgeAccessory: v.design.badgeAccessory || null, cornerRadiusMm: badgeRadius(v.design, v.template), slot: slot ? { ...slot, units: 'mm', placement: `top-${v.design.slot?.shape === 'circle' ? v.design.slot.position || 'center' : 'center'}`, topOffsetMm: 5 } : null, material: v.design.material || 'legacy-background', sizeId: v.design.sizeId, widthMm: physical.w, heightMm: physical.h, thicknessMm: v.template.thicknessMm, requiresQuote: v.design.sizeId === 'custom', duplex: !!v.design.duplex, printView: v.design.printView || 'direct', printStack: v.design.printStack || null, stackOrder: 'substrate-outwards', artworkMode: v.design.printStack ? 'single-artwork-ink-stack' : 'legacy-independent-faces', artwork: 'readable from each selected face; no automatic mirroring; substrate and gloss excluded from ink PNG; printer must plan mirroring and white ink' }, null, 2), { name: 'manufacturing.json' });
-    for (const a of v.assets) zip.file(store.file('files', a.id, 'bin'), { name: `${a.variant === 'original' ? 'originals' : 'cutouts'}/${a.id}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime.split('/')[1]}` });
+    for (const a of v.assets) zip.append(await store.readBlob('files', a.id, 'bin'), { name: `${a.variant === 'original' ? 'originals' : 'cutouts'}/${a.id}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime.split('/')[1]}` });
     zip.append(v.design.photoHolder ? `照片立／掛牌：本包尺寸為相紙範圍，非外框成品尺寸。外框尺寸尚待確認，不提供外框切割檔。\n${v.design.photoHolder.photoService === 'own' ? '客人自備照片：final-preview.png 僅供試放參考，不安排照片列印。' : '加購照片列印：photo-print.png 為相紙尺寸圖稿；列印方式依實際設備確認。'}\n底座、背面 NFC 選配見 photo-holder-options.json。NFC 選配不代表晶片已寫入。原始圖片與可編輯 JSON 保留。` : '原圖及去背圖依 UUID 保存，原始檔名與 SHA-256 請見 manifest.json。\nproduction-with-bleed.png 依 manifest.json 的模板出血設定輸出（出血為 0 時即成品大小）；final-preview.png 為成品與 UV 示意。安全線為排版提醒，不會自動裁切圖稿。\nUV 遮罩只定義效果區域與強度，不代表真實凸起高度。印前請依加工設備校色與檢查。', { name: 'README.txt' });
-    await zip.finalize();
+    await zip.finalize(); await collected;
+    if (cloud) {
+      await store.writeBlob('files', `${v.id}-package`, 'zip', Buffer.concat(chunks), false, 'application/zip');
+      const signed = await store.signedDownloadUrl!('files', `${v.id}-package`, 'zip', 300);
+      res.redirect(302, `${signed}${signed.includes('?') ? '&' : '?'}download=${encodeURIComponent(`wanshi-${v.id}.zip`)}`);
+    }
   });
   app.use('/api', (_req, _res, next) => next(new HttpError(404, '找不到 API')));
   app.use(express.static(path.resolve('dist')));

@@ -14,6 +14,27 @@ React + TypeScript + React Konva 編輯器，搭配 Express 私有 API。此專�
 
 線上預覽支援商品切換、直橫式、上傳、排版、素材及瀏覽器本機儲存；資料只留在該瀏覽器的 IndexedDB。確認製作包、正式購物車、AI 去背與私有跨裝置儲存仍需 Express 伺服器，因此在 Pages 預覽中明確停用。
 
+## Vercel + Supabase 正式部署
+
+專案已支援以 Vercel 部署前端及 Express API，並以 Supabase Postgres 保存草稿／版本／購物車、Supabase 私有 Storage 保存原圖與製作檔。未設定 Supabase 時，本機開發仍使用 `data/`，不受影響。
+
+1. 在 Supabase 建立專案，開啟 SQL Editor，執行 [`supabase/migrations/20261022000000_wanshi_storage.sql`](supabase/migrations/20261022000000_wanshi_storage.sql)。這會建立私有 `wanshi-private` bucket 與只允許伺服器 secret key 存取的資料表。
+2. 在 Vercel 匯入這個 GitHub repository。專案會讀取 `vercel.json`，執行 `pnpm build`，並把 `api/[...path].ts` 部署為 Node.js Function。
+3. 在 Vercel Project Settings → Environment Variables 設定：
+
+   ```text
+   SUPABASE_URL=https://你的專案.supabase.co
+   SUPABASE_SECRET_KEY=sb_secret_...
+   SUPABASE_STORAGE_BUCKET=wanshi-private
+   COOKIE_SECURE=true
+   ```
+
+4. 重新部署後打開 Vercel 網址。前端與 API 使用同一網域，不需把 Supabase secret key 放進瀏覽器，也不要建立 `VITE_SUPABASE_SECRET_KEY`。
+
+Vercel Function 的請求／回應負載上限為 4.5 MB，因此正式部署會先向 API 取得限時上傳網址，再由瀏覽器把最高 20 MB 的原圖直接傳到 Supabase 私有 Storage。伺服器完成解碼、格式、像素與雜湊檢查後才會把素材加入設計。預覽與 ZIP 下載同樣使用短效簽名網址，檔案不會設為公開。
+
+目前的私有權限仍以 HttpOnly 匿名瀏覽器 session 為單位；換電腦或清除 cookie 後無法恢復原工作階段。若要提供會員跨裝置設計，下一階段再接 Supabase Auth，並把現有 owner 欄位遷移到會員 ID。
+
 ## 安裝與執行
 
 需要 Node.js 22.12+（已在 Node 24、Windows 驗證）以及 pnpm 10/11 或 npm。
