@@ -1,41 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
 import { Preview } from './Canvas';
 import { dimensions, type Design, type Template } from '../shared/model';
+import { publicUrl } from './urls';
 
 type Point = [number, number];
 // Clockwise aperture corners measured on the 1254 × 1254 source photographs.
 export const photoScenes = {
   models: { name: '模型櫃',
-    portrait: { src: '/scenes/models-photo-v1.webp', corners: [[464,427],[787,427],[787,876],[464,876]] as Point[] },
-    landscape: { src: '/scenes/models-landscape-v1.webp', corners: [[363,447],[892,447],[892,784],[363,784]] as Point[] },
+    portrait: { src: publicUrl('scenes/models-photo-v1.webp'), corners: [[464,427],[787,427],[787,876],[464,876]] as Point[] },
+    landscape: { src: publicUrl('scenes/models-landscape-v1.webp'), corners: [[363,447],[892,447],[892,784],[363,784]] as Point[] },
   },
   dolls: { name: '娃娃牆',
-    portrait: { src: '/scenes/dolls-photo-v1.webp', corners: [[465,389],[789,389],[789,852],[465,852]] as Point[] },
-    landscape: { src: '/scenes/dolls-landscape-v1.webp', corners: [[399,475],[858,475],[858,791],[399,791]] as Point[] },
+    portrait: { src: publicUrl('scenes/dolls-photo-v1.webp'), corners: [[465,389],[789,389],[789,852],[465,852]] as Point[] },
+    landscape: { src: publicUrl('scenes/dolls-landscape-v1.webp'), corners: [[399,475],[858,475],[858,791],[399,791]] as Point[] },
   },
   desk: { name: '溫暖桌面',
-    portrait: { src: '/scenes/desk-photo-v1.webp', corners: [[405,265],[855,265],[855,887],[405,887]] as Point[] },
-    landscape: { src: '/scenes/desk-landscape-v1.webp', corners: [[314,398],[956,398],[956,831],[314,831]] as Point[] },
+    portrait: { src: publicUrl('scenes/desk-photo-v1.webp'), corners: [[405,265],[855,265],[855,887],[405,887]] as Point[] },
+    landscape: { src: publicUrl('scenes/desk-landscape-v1.webp'), corners: [[314,398],[956,398],[956,831],[314,831]] as Point[] },
   },
   shelf: { name: '生活層架',
-    portrait: { src: '/scenes/shelf-photo-v1.webp', corners: [[394,272],[860,272],[860,905],[394,905]] as Point[] },
-    landscape: { src: '/scenes/shelf-landscape-v1.webp', corners: [[315,386],[945,386],[945,804],[315,804]] as Point[] },
+    portrait: { src: publicUrl('scenes/shelf-photo-v1.webp'), corners: [[394,272],[860,272],[860,905],[394,905]] as Point[] },
+    landscape: { src: publicUrl('scenes/shelf-landscape-v1.webp'), corners: [[315,386],[945,386],[945,804],[315,804]] as Point[] },
   },
   wall: { name: '居家牆面',
-    portrait: { src: '/scenes/wall-photo-v1.webp', corners: [[472,300],[783,300],[783,747],[472,747]] as Point[] },
-    landscape: { src: '/scenes/wall-landscape-v1.webp', corners: [[333,345],[930,345],[930,738],[333,738]] as Point[] },
+    portrait: { src: publicUrl('scenes/wall-photo-v1.webp'), corners: [[472,300],[783,300],[783,747],[472,747]] as Point[] },
+    landscape: { src: publicUrl('scenes/wall-landscape-v1.webp'), corners: [[333,345],[930,345],[930,738],[333,738]] as Point[] },
   },
   gallery: { name: '藝廊展台',
-    portrait: { src: '/scenes/gallery-photo-v1.webp', corners: [[411,275],[842,275],[842,860],[411,860]] as Point[] },
-    landscape: { src: '/scenes/gallery-landscape-v1.webp', corners: [[297,371],[951,371],[951,800],[297,800]] as Point[] },
+    portrait: { src: publicUrl('scenes/gallery-photo-v1.webp'), corners: [[411,275],[842,275],[842,860],[411,860]] as Point[] },
+    landscape: { src: publicUrl('scenes/gallery-landscape-v1.webp'), corners: [[297,371],[951,371],[951,800],[297,800]] as Point[] },
   },
   bedside: { name: '床頭櫃',
-    portrait: { src: '/scenes/bedside-photo-v1.webp', corners: [[698,358],[1058,351],[1054,870],[687,855]] as Point[] },
-    landscape: { src: '/scenes/bedside-landscape-v1.webp', corners: [[651,547],[1109,543],[1111,850],[650,841]] as Point[] },
+    portrait: { src: publicUrl('scenes/bedside-photo-v1.webp'), corners: [[698,358],[1058,351],[1054,870],[687,855]] as Point[] },
+    landscape: { src: publicUrl('scenes/bedside-landscape-v1.webp'), corners: [[651,547],[1109,543],[1111,850],[650,841]] as Point[] },
   },
   computer: { name: '電腦桌',
-    portrait: { src: '/scenes/computer-photo-v1.webp', corners: [[684,340],[1085,333],[1086,923],[684,905]] as Point[] },
-    landscape: { src: '/scenes/computer-landscape-v1.webp', corners: [[564,549],[1138,545],[1138,912],[562,893]] as Point[] },
+    portrait: { src: publicUrl('scenes/computer-photo-v1.webp'), corners: [[684,340],[1085,333],[1086,923],[684,905]] as Point[] },
+    landscape: { src: publicUrl('scenes/computer-landscape-v1.webp'), corners: [[564,549],[1138,545],[1138,912],[562,893]] as Point[] },
   },
 };
 export type PhotoSceneId = keyof typeof photoScenes;

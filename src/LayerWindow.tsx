@@ -28,7 +28,7 @@ export function LayerWindow({ layers, selected, select, patch, reorder, disabled
           const target = [...current.centers].sort((a,b) => Math.abs(a.y - origin.y - delta) - Math.abs(b.y - origin.y - delta))[0].id;
           const next = { ...current, delta, target }; dragRef.current = next; setDrag(next);
         }} onPointerUp={() => finish()} onPointerCancel={() => finish(true)} onLostPointerCapture={() => { if (dragRef.current) finish(true); }}>⠿</button>
-        <button className="layer-select" title={l.name} onClick={() => select(l.id)}><span className="layer-kind" aria-hidden="true">{l.kind === 'image' ? '▧' : l.kind === 'text' ? 'T' : '✧'}</span><span className="layer-name">{l.name}</span></button>
+        <button className="layer-select" title={l.kind === 'stroke' ? '自由筆刷畫出的線條；橡皮擦不會建立圖層' : l.name} onClick={() => select(l.id)}><span className="layer-kind" aria-hidden="true">{l.kind === 'image' ? '▧' : l.kind === 'text' ? 'T' : l.kind === 'stroke' ? '〰' : '✧'}</span><span className="layer-name">{l.name}</span></button>
         <button aria-label={`${l.visible ? '隱藏' : '顯示'} ${l.name}`} disabled={disabled} onClick={() => patch({ visible: !l.visible }, l.id)}>{l.visible ? '◉' : '○'}</button><button aria-label={`${l.locked ? '解鎖' : '鎖定'} ${l.name}`} disabled={disabled || l.kind === 'frame'} onClick={() => patch({ locked: !l.locked }, l.id)}>{l.locked ? '🔒' : '◇'}</button>
         <button aria-label={`上移 ${l.name}`} disabled={disabled || l.locked || index === 0} onClick={() => reorder(l.id, ordered[index - 1].id)}>↑</button><button aria-label={`下移 ${l.name}`} disabled={disabled || l.locked || index === ordered.length - 1} onClick={() => reorder(l.id, ordered[index + 1].id)}>↓</button>
       </div>;

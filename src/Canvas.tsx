@@ -1,3 +1,4 @@
+import { cadSelect, layerBounds, type SelectionPoint } from '../shared/selection';
 import { eraseLayers } from '../shared/eraser';
 import { scatterPetals } from '../shared/petals';
 import { useEffect, useRef, useState } from 'react';
@@ -5,6 +6,7 @@ import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva
 import Konva from 'konva';
 import { drawLayer, drawDesign, drawSubstrate, drawPhotoBorder } from '../shared/draw';
 import { newLayer, dimensions, zones, photoImageArea, slotGeometry, badgeRadius, type Design, type DesignLayer, type Template, type Asset } from '../shared/model';
+import { assetUrl } from './urls';
 
 export function useImages(assets: Asset[]) {
   const [images, setImages] = useState(new Map<string, HTMLImageElement>());
@@ -12,7 +14,7 @@ export function useImages(assets: Asset[]) {
   useEffect(() => {
     let active = true;
     for (const a of assets) if (!images.has(a.id)) {
-      const img = new Image(); img.src = `/api/assets/${a.id}`;
+      const img = new Image(); img.src = assetUrl(a);
       img.onload = () => { if (active) setImages(old => new Map(old).set(a.id, img)); };
       img.onerror = () => { if (active) setFailed(old => [...old.filter(id => id !== a.id), a.id]); };
     }
@@ -21,11 +23,15 @@ export function useImages(assets: Asset[]) {
   return { images, failed };
 }
 export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number };
-type Props = { replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
-export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers }: Props) {
+type Props = { liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
+type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
+type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
+export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany }: Props) {
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
+  const [marquee, setMarquee] = useState<Marquee | null>(null);
+  const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null);
   function stroke(points: number[]) {
     const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1), r = paint!.size / 2;
     const x = Math.min(...xs) - r, y = Math.min(...ys) - r, width = Math.max(...xs) - x + r, height = Math.max(...ys) - y + r;
@@ -54,9 +60,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   useEffect(() => {
     if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
     const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
-    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint ? [node] : []);
+    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint && !selectedIds.length ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, disabled, paint, bounded, px, py, pw, ph]);
+  }, [selected, current, disabled, paint, selectedIds, bounded, px, py, pw, ph]);
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
@@ -86,19 +92,39 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     if (Math.abs(sy.delta) < 5 / scale) { node.y(node.y() + sy.delta); lines.y = sy.v; }
     setSnapLines(lines);
   }
+  function pointer(stage:Konva.Stage){ const p=stage.getPointerPosition()!;return{x:p.x/scale-pad-b,y:p.y/scale-pad-b}; }
+  function beginMarquee(e:Konva.KonvaEventObject<MouseEvent|TouchEvent>){
+    if(disabled||paint||e.target!==e.target.getStage())return;
+    const start=pointer(e.target.getStage()!);const next={start,end:start,add:'shiftKey' in e.evt&&e.evt.shiftKey};
+    marqueeRef.current=next;setMarquee(next);select(null);
+  }
+  function moveMarquee(e:Konva.KonvaEventObject<MouseEvent|TouchEvent>){
+    if(!marqueeRef.current)return;const next={...marqueeRef.current,end:pointer(e.target.getStage()!)};marqueeRef.current=next;setMarquee(next);
+  }
+  function finishMarquee(){
+    const current=marqueeRef.current;if(!current)return;
+    const moved=Math.hypot(current.end.x-current.start.x,current.end.y-current.start.y)>.8;
+    const hits=moved?cadSelect(design.layers,current.start,current.end):[];
+    selectMany([...new Set([...(current.add?selectedIds:[]),...hits])]);marqueeRef.current=null;setMarquee(null);
+  }
+  const selectedBounds=design.layers.filter(l=>selectedIds.includes(l.id)&&l.visible&&!l.locked).map(l=>({id:l.id,...layerBounds(l)}));
+  const marqueeBox=marquee&&{x:Math.min(marquee.start.x,marquee.end.x),y:Math.min(marquee.start.y,marquee.end.y),width:Math.abs(marquee.end.x-marquee.start.x),height:Math.abs(marquee.end.y-marquee.start.y),crossing:marquee.end.x<marquee.start.x};
   return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
-    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={e => { if (e.target === e.target.getStage()) select(null); }} onTouchStart={e => { if (e.target === e.target.getStage()) select(null); }}>
+    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={beginMarquee} onTouchStart={beginMarquee} onMouseMove={moveMarquee} onTouchMove={moveMarquee} onMouseUp={finishMarquee} onTouchEnd={finishMarquee}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
         <Rect width={fullW} height={fullH} cornerRadius={radius} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
         <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
           <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
-            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled && !paint} listening={!disabled && !paint}
+            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''))}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
-              onClick={() => select(l.id)} onTap={() => select(l.id)} onDragStart={() => select(l.id)}
-              onDragMove={e => { if (guides) snap(e.target); live(updated(l, e.target)); }}
-              onDragEnd={e => { commit(updated(l, e.target)); live(null); setSnapLines({}); }}
+              onClick={e => { if(e.evt.shiftKey)selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
+                if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}
+                else{selectMany([]);select(l.id);}
+              }}
+              onDragMove={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;for(const[id,p]of group.original){if(id!==l.id)nodes.current.get(id)?.position({x:p.x+dx,y:p.y+dy});}liveMany(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));}else{if(guides)snap(e.target);live(updated(l,e.target));} }}
+              onDragEnd={e => { const group=groupDrag.current;if(group){const dx=e.target.x()-group.startX,dy=e.target.y()-group.startY;replaceLayers(design.layers.map(x=>{const p=group.original.get(x.id);return p?{...x,x:p.x+dx,y:p.y+dy}:x;}));liveMany(null);groupDrag.current=null;}else{commit(updated(l,e.target));live(null);setSnapLines({});} }}
               onTransform={() => live(updated(l, nodes.current.get(l.id)!))}
               onTransformEnd={() => { const node = nodes.current.get(l.id)!; const next = updated(l, node); node.scale({ x: 1, y: 1 }); commit(next); live(null); }}
             />)}
@@ -114,6 +140,8 @@ export function EditorCanvas({ design, template, images, selected, select, commi
           {snapLines.x !== undefined && <Line points={[b + snapLines.x, 0, b + snapLines.x, fullH]} stroke="#df5a95" strokeWidth={0.45}/>}
           {snapLines.y !== undefined && <Line points={[0, b + snapLines.y, fullW, b + snapLines.y]} stroke="#df5a95" strokeWidth={0.45}/>}
         </Group>}
+        <Group listening={false}>{selectedBounds.map(s=><Rect key={s.id} x={b+s.x} y={b+s.y} width={s.width} height={s.height} stroke="#245f52" strokeWidth={.55} dash={[2,1]}/>)}
+          {marqueeBox&&<Rect x={b+marqueeBox.x} y={b+marqueeBox.y} width={marqueeBox.width} height={marqueeBox.height} fill={marqueeBox.crossing?'#65a77d26':'#5c91c626'} stroke={marqueeBox.crossing?'#397b50':'#376e9e'} strokeWidth={.55} dash={marqueeBox.crossing?[2,1]:undefined}/>}</Group>
         {bounded && <Rect ref={proxyRef} x={px} y={py} width={pw} height={ph} listening={false} onTransform={() => transformProxy()} onTransformEnd={() => transformProxy(true)}/>}
         <Transformer ref={transformRef} flipEnabled={false} keepRatio={true} rotateAnchorOffset={26} anchorSize={12} anchorCornerRadius={3} borderStroke="#255f55" anchorStroke="#255f55" anchorFill="#ffffff" enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']} boundBoxFunc={(old, next) => Math.abs(next.width) < 8 || Math.abs(next.height) < 8 || Math.abs(next.width) > 2500 || Math.abs(next.height) > 2500 ? old : next}/>
       </Group></Layer>

@@ -2,6 +2,10 @@
 
 React + TypeScript + React Konva 編輯器，搭配 Express 私有 API。此專案獨立於旁邊的商城原型，不包含商城、付款或物流。
 
+## GitHub 線上預覽
+
+推送 `main` 後，GitHub Actions 會自動建置並部署可操作的 Pages 預覽。預覽網址為 `https://wenchenzxc-source.github.io/wanshi-editor/`。線上預覽支援商品切換、直橫式、上傳、排版、素材及瀏覽器本機儲存；資料只留在該瀏覽器的 IndexedDB。確認製作包、正式購物車、AI 去背與私有跨裝置儲存仍需 Express 伺服器，因此在 Pages 預覽中明確停用。
+
 ## 安裝與執行
 
 需要 Node.js 22.12+（已在 Node 24、Windows 驗證）以及 pnpm 10/11 或 npm。

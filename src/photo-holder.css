@@ -2,3 +2,4 @@
 
 
 .product-size-bar .holder-options-row{margin:0;min-width:260px}.product-size-bar .holder-options-row button{display:flex;flex-direction:column;gap:5px;align-items:center;padding:10px 22px}
+.holder-direction button{display:flex;align-items:center;justify-content:center;gap:7px}.holder-direction button span{font-size:19px;line-height:1}

@@ -21,3 +21,8 @@
 .asset-panel .brush-tools label { display: grid; width: 100%; margin: 0; }
 
 .brush-modes { flex-wrap: wrap; }
+
+.editor-toolbar { flex-wrap: wrap; gap: 8px; }
+.editor-toolbar > button[aria-pressed] { display: none; }
+.editor-toolbar > button:not([aria-pressed]) { font-size: 11px; line-height: 1.3; padding: 8px 10px; border: 1px solid #d8dfd3; background: #fff; white-space: nowrap; }
+.cad-selection-hint { margin: 7px 22px 2px; color: #65766d; font-size: 11px; text-align: center; }

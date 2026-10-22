@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { BadgeHardware } from './BadgeHardware';
 import { Preview } from './Canvas';
 import { dimensions, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template } from '../shared/model';
+import { publicUrl } from './urls';
 
 const scenes = [
-  { id: 'backpack', name: '背包吊牌', image: '/scenes/badge-backpack-clean-v2.png', x: 49.8, y: 33.1 },
-  { id: 'lanyard', name: '識別證配戴', image: '/scenes/badge-lanyard-clean-v2.png', x: 50.5, y: 42.4 },
+  { id: 'backpack', name: '背包吊牌', image: publicUrl('scenes/badge-backpack-clean-v2.png'), x: 49.8, y: 33.1 },
+  { id: 'lanyard', name: '識別證配戴', image: publicUrl('scenes/badge-lanyard-clean-v2.png'), x: 50.5, y: 42.4 },
 ];
 export function BadgeScene({ design, template, images }: { design: Design; template: Template; images: Map<string, HTMLImageElement> }) {
   const [sceneId, setSceneId] = useState(() => { try { return localStorage.getItem('wanshi:badge-scene') || 'backpack'; } catch { return 'backpack'; } });

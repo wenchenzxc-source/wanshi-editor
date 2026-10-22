@@ -1,0 +1,24 @@
+import { test, expect } from '@playwright/test';
+test('CAD box selection moves and deletes scattered assets without toolbar mode',async({page})=>{
+ await page.setViewportSize({width:1600,height:1200});await page.goto('/');
+ await page.getByRole('button',{name:'素材',exact:true}).click();await page.getByRole('button',{name:'暖光星芒',exact:true}).click();
+ await page.getByRole('button',{name:'上傳',exact:true}).click();await expect(page.locator('.asset-tile')).toHaveCount(0);
+ await page.getByRole('button',{name:'筆刷',exact:true}).click();await page.getByRole('button',{name:'飄落櫻花',exact:true}).click();await page.getByRole('button',{name:'灑落整個版面',exact:true}).click();
+ const draft=()=>page.evaluate(async()=>(await fetch('/api/designs/'+localStorage.getItem('wanshi:last-design'))).json());
+ await expect.poll(async()=>(await draft()).design.layers.length).toBe(7);
+ await page.getByRole('button',{name:'選取／移動',exact:true}).click();
+ await expect(page.getByRole('button',{name:'框選／多選',exact:true})).toBeHidden();
+ const stage=page.locator('[data-testid="editor-canvas"] canvas').first();await stage.scrollIntoViewIfNeeded();const b=(await stage.boundingBox())!;
+ await page.mouse.move(b.x+2,b.y+2);await page.mouse.down();await page.mouse.move(b.x+b.width-2,b.y+b.height-2,{steps:10});await page.mouse.up();
+ await expect(page.getByText(/^已選 7 個/)).toBeVisible();
+ await page.screenshot({path:'test-results/cad-selection-ui.png',fullPage:true});
+ const before=(await draft()).design.layers,first=before[0],scale=b.width/178,a=first.rotation*Math.PI/180;
+ const cx=first.x+first.width/2*Math.cos(a)-first.height/2*Math.sin(a),cy=first.y+first.width/2*Math.sin(a)+first.height/2*Math.cos(a);
+ const px=b.x+(12+3+cx)*scale,py=b.y+(12+3+cy)*scale;
+ await page.mouse.move(px,py);await page.mouse.down();await page.mouse.move(px+20,py+10,{steps:6});await page.mouse.up();
+ await expect.poll(async()=>(await draft()).design.layers[0].x).not.toBe(before[0].x);
+ const moved=(await draft()).design.layers;const dx=moved[0].x-before[0].x;for(let i=1;i<7;i++)expect(moved[i].x-before[i].x).toBeCloseTo(dx,5);
+ await page.keyboard.press('Delete');await expect.poll(async()=>(await draft()).design.layers.length).toBe(0);
+ await page.keyboard.press('Control+z');await expect.poll(async()=>(await draft()).design.layers).toEqual(moved);
+ await page.reload();await expect(page.getByText(/CAD 框選/)).toBeVisible();expect((await draft()).design.layers).toEqual(moved);
+});

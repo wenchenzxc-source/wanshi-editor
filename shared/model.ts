@@ -73,7 +73,7 @@ export function resolveTemplate(d: Pick<Design, 'sizeId' | 'customSize'>, t: Tem
   const size = t.sizes?.find(s => s.id === d.sizeId) || t.sizes?.[0];
   return size ? { ...t, widthMm: size.widthMm, heightMm: size.heightMm, thicknessMm: size.thicknessMm ?? t.thicknessMm } : t;
 }
-export type Asset = { libraryArtworkId?: string; deletedAt?: string; id: string; designId: string; originalName: string; mime: string; width: number; height: number; sha256: string; sourceAssetId?: string; variant: 'original' | 'cutout' };
+export type Asset = { libraryArtworkId?: string; deletedAt?: string; previewUrl?: string; id: string; designId: string; originalName: string; mime: string; width: number; height: number; sha256: string; sourceAssetId?: string; variant: 'original' | 'cutout' };
 export type VersionInfo = { id: string; createdAt: string; revision: number; orderItemId: string | null };
 export const templates: Template[] = [{ id: 'a5-plaque-v1', name: 'A5 飾牌', version: 1, widthMm: 148, heightMm: 210, bleedMm: 3, safeMm: 5, dpi: 300, noProcess: [] }, { id: 'acrylic-block-v1', name: '壓克力磚', version: 3, allowCustomSize: true, presentation: 'acrylic-block', widthMm: 100, heightMm: 100, bleedMm: 0, safeMm: 1, dpi: 300, noProcess: [], allowedMaterials: ['clear'], sizes: [
   { id: 'mini-friend', name: '迷你飯友 · 30 × 20 × 5 mm', widthMm: 20, heightMm: 30, thicknessMm: 5 },
