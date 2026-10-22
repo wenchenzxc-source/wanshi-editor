@@ -20,6 +20,10 @@ export const layerSchema = z.object({
   contrast: z.number().min(0.25).max(2).optional(),
   saturation: z.number().min(0).max(2).optional(),
   blurMm: z.number().min(0).max(10).optional(),
+  cropX: z.number().min(0).max(1).optional(),
+  cropY: z.number().min(0).max(1).optional(),
+  cropWidth: z.number().positive().max(1).optional(),
+  cropHeight: z.number().positive().max(1).optional(),
   visible: z.boolean(), locked: z.boolean(), fill: color,
   assetId: z.string().uuid().optional(), text: z.string().max(2000).optional(),
   face: z.enum(['front', 'back']).optional(),
@@ -29,6 +33,9 @@ export const layerSchema = z.object({
 }).superRefine((l, ctx) => {
   if (l.kind === 'stroke' && (!l.points || l.points.length % 2 || !l.brushRatio)) ctx.addIssue({ code: 'custom', message: '筆畫資料不完整' });
   if (l.kind === 'image' && !l.assetId) ctx.addIssue({ code: 'custom', message: '圖片缺少素材 ID' });
+  const crop = [l.cropX, l.cropY, l.cropWidth, l.cropHeight];
+  if (crop.some(v => v !== undefined) && crop.some(v => v === undefined)) ctx.addIssue({ code: 'custom', message: '裁切資料不完整' });
+  if ((l.cropX ?? 0) + (l.cropWidth ?? 0) > 1.000001 || (l.cropY ?? 0) + (l.cropHeight ?? 0) > 1.000001) ctx.addIssue({ code: 'custom', message: '裁切範圍超出圖片' });
   if (l.kind === 'frame' && !l.frameId) ctx.addIssue({ code: 'custom', message: '圖框缺少樣式' });
 });
 export const designSchema = z.object({

@@ -5,7 +5,7 @@ import { fonts, getFont, type FontId } from '../shared/fonts';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, ApiError } from './api';
-import { type PaintTool, EditorCanvas, Preview, useImages } from './Canvas';
+import { type CropBox, type PaintTool, EditorCanvas, Preview, useImages } from './Canvas';
 import { LayerWindow } from './LayerWindow';
 import { ProductScene } from './ProductScene';
 import { PhotoHolderOptions, defaultPhotoHolder } from './PhotoHolder';
@@ -26,6 +26,7 @@ function App() {
   const [paintMode, setPaintMode] = useState<'select' | 'pen' | 'stamp' | 'petals' | 'eraser'>('select'), [paintColor, setPaintColor] = useState('#b87987'), [paintSize, setPaintSize] = useState(2), [paintOpacity, setPaintOpacity] = useState(1), [stampAsset, setStampAsset] = useState<string>(), [stampRotation, setStampRotation] = useState(0);
   const [flowerType, setFlowerType] = useState<'sakura' | 'rose'>('sakura'), [petalCount, setPetalCount] = useState(6);
   const [transientMany, setTransientMany] = useState<DesignLayer[] | null>(null);
+  const [cropBox, setCropBox] = useState<CropBox | null>(null);
   const [marquee, setMarquee] = useState(false), [contained, setContained] = useState(false), [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [fontChoice, setFontChoice] = useState<FontId>('sans');
   const [config, setConfig] = useState<Config>(), [design, setDesign] = useState<Design>(), [assets, setAssets] = useState<Asset[]>([]), [versions, setVersions] = useState<VersionInfo[]>([]);
@@ -43,6 +44,7 @@ function App() {
   const canvasDesign = design && { ...design, layers: faceLayers };
   const chosen = faceLayers.find(l => l.id === selected);
   function setSelected(id: string | null) {
+    if (id !== selected) setCropBox(null);
     setSelectedState(id);
     const next = id ? designRef.current?.layers.find(layer => layer.id === id) : undefined;
     if (next?.kind === 'image') {
@@ -148,7 +150,47 @@ function App() {
   async function cutout() { if (!chosen?.assetId) return; await run(async () => { const result = await api<Asset>(`/assets/${chosen.assetId}/remove-background`, { method: 'POST' }); setAssets(a => [...a, result]); patchLayer({ assetId: result.id }); await save(designRef.current); }); }
   const mm = design && template ? dimensions(design, template) : undefined;
   const selectedAsset = assets.find(a => a.id === chosen?.assetId);
-  const effectiveDpi = selectedAsset && chosen ? Math.round(Math.min(selectedAsset.width / chosen.width, selectedAsset.height / chosen.height) * 25.4) : null;
+  const effectiveDpi = selectedAsset && chosen ? Math.round(Math.min(selectedAsset.width * (chosen.cropWidth ?? 1) / chosen.width, selectedAsset.height * (chosen.cropHeight ?? 1) / chosen.height) * 25.4) : null;
+  const startCrop = () => { if (chosen?.kind === 'image') { setCropBox({ x: 0, y: 0, width: chosen.width, height: chosen.height }); setPaintMode('select'); } };
+  const cropRatio = (ratio: number | null) => {
+    if (!chosen || !cropBox) return;
+    if (!ratio) { setCropBox({ x: 0, y: 0, width: chosen.width, height: chosen.height }); return; }
+    let width = chosen.width, height = width / ratio;
+    if (height > chosen.height) { height = chosen.height; width = height * ratio; }
+    setCropBox({ x: (chosen.width - width) / 2, y: (chosen.height - height) / 2, width, height });
+  };
+  const applyCrop = () => {
+    if (!chosen || chosen.kind !== 'image' || !cropBox) return;
+    const sourceX = chosen.cropX ?? 0, sourceY = chosen.cropY ?? 0, sourceWidth = chosen.cropWidth ?? 1, sourceHeight = chosen.cropHeight ?? 1;
+    const angle = chosen.rotation * Math.PI / 180;
+    patchLayer({
+      x: chosen.x + cropBox.x * Math.cos(angle) - cropBox.y * Math.sin(angle),
+      y: chosen.y + cropBox.x * Math.sin(angle) + cropBox.y * Math.cos(angle),
+      width: cropBox.width, height: cropBox.height,
+      cropX: sourceX + sourceWidth * cropBox.x / chosen.width,
+      cropY: sourceY + sourceHeight * cropBox.y / chosen.height,
+      cropWidth: sourceWidth * cropBox.width / chosen.width,
+      cropHeight: sourceHeight * cropBox.height / chosen.height,
+    });
+    setCropBox(null);
+  };
+  const clearCrop = () => {
+    if (chosen?.kind !== 'image') return;
+    const sourceRatio = selectedAsset?.width && selectedAsset.height ? selectedAsset.width / selectedAsset.height : chosen.width / chosen.height;
+    const area = chosen.width * chosen.height, width = Math.sqrt(area * sourceRatio), height = width / sourceRatio;
+    const localX = (chosen.width - width) / 2, localY = (chosen.height - height) / 2, angle = chosen.rotation * Math.PI / 180;
+    patchLayer({ x: chosen.x + localX * Math.cos(angle) - localY * Math.sin(angle), y: chosen.y + localX * Math.sin(angle) + localY * Math.cos(angle), width, height, cropX: undefined, cropY: undefined, cropWidth: undefined, cropHeight: undefined });
+    setCropBox(null);
+  };
+  useEffect(() => {
+    if (!cropBox) return;
+    const keyboardCrop = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setCropBox(null); }
+      if (event.key === 'Enter') { event.preventDefault(); applyCrop(); }
+    };
+    window.addEventListener('keydown', keyboardCrop);
+    return () => window.removeEventListener('keydown', keyboardCrop);
+  }, [cropBox, chosen]);
   function switchProduct(id: string) {
     if (!design || id === design.templateId) return;
  const next = config!.templates.find(t => t.id === id)!; change(withPrintStack({ ...design, templateId: next.id, sizeId: next.sizes?.[0].id, customSize: undefined, slot: undefined, badgeAccessory: undefined, badgeCornerRadiusMm: undefined, photoHolder: next.presentation === 'photo-holder' ? { ...defaultPhotoHolder } : undefined, material: next.allowedMaterials?.[0] || design.material }, next.presentation === 'photo-holder' ? 'white-cmyk' : design.printStack || 'white-cmyk')); setSelected(null); setTransient(null);   }
@@ -170,6 +212,7 @@ function App() {
       <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${(template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
+          <ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/>
           <ImageAdjustments layer={chosen} patch={patchLayer}/>
           <button className="ai-button" disabled={!config?.backgroundRemoval} onClick={cutout}>✧ {config?.backgroundRemoval ? 'AI 一鍵去背' : 'AI 去背未啟用'}</button>
           <small className="muted">{config?.backgroundRemoval ? '將圖片送往 remove.bg 處理；原圖完整保留。' : '需在伺服器設定 remove.bg 金鑰。'}</small>
@@ -196,7 +239,7 @@ function App() {
 
         <div className="dimension-workspace">
           <div className="dimension-horizontal"><span aria-hidden="true">↔</span>{design.sizeId === 'custom' && design.customSize ? <DimensionControl axis="長" label="長 (mm)" value={mm!.w} min={20} max={250} onChange={value => change({ ...design, customSize: { ...design.customSize!, [design.orientation === 'portrait' ? 'widthMm' : 'heightMm']: value } })}/> : <span>{template.presentation?.startsWith('acrylic-') ? '長' : '寬'} {mm!.w} mm</span>}</div>
-          <div className="dimension-canvas"><EditorCanvas liveMany={setTransientMany} marquee={marquee} contained={contained} selectedIds={selectedIds} selectMany={setSelectedIds} replaceLayers={layers => change({ ...design, layers: design.layers.map(l => layers.find(v => v.id === l.id) || l) })} createBatch={layers => { if (design.layers.length + layers.length > 150) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...layers] }); }} paint={tab === 'brush' && paintMode !== 'select' ? { mode: paintMode, color: paintColor, size: paintSize, opacity: paintOpacity, assetId: stampAsset, rotation: stampRotation, flowerType, count: petalCount } : undefined} create={l => { if (design.layers.length >= 150) { setError('最多 150 個圖層，請先刪除不需要的筆畫。'); return; } change({ ...design, layers: [...design.layers, l] }); }} design={canvasDesign!} template={template} images={images} selected={selected} select={setSelected} commit={l => patchLayer(l, l.id)} live={setTransient} zoom={zoom} guides={guides} disabled={busy || confirmation}/></div>
+          <div className="dimension-canvas"><EditorCanvas cropBox={cropBox} setCropBox={setCropBox} liveMany={setTransientMany} marquee={marquee} contained={contained} selectedIds={selectedIds} selectMany={setSelectedIds} replaceLayers={layers => change({ ...design, layers: design.layers.map(l => layers.find(v => v.id === l.id) || l) })} createBatch={layers => { if (design.layers.length + layers.length > 150) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...layers] }); }} paint={tab === 'brush' && paintMode !== 'select' ? { mode: paintMode, color: paintColor, size: paintSize, opacity: paintOpacity, assetId: stampAsset, rotation: stampRotation, flowerType, count: petalCount } : undefined} create={l => { if (design.layers.length >= 150) { setError('最多 150 個圖層，請先刪除不需要的筆畫。'); return; } change({ ...design, layers: [...design.layers, l] }); }} design={canvasDesign!} template={template} images={images} selected={selected} select={setSelected} commit={l => patchLayer(l, l.id)} live={setTransient} zoom={zoom} guides={guides} disabled={busy || confirmation}/></div>
           <div className="dimension-vertical"><span aria-hidden="true">↕</span>{design.sizeId === 'custom' && design.customSize ? <DimensionControl vertical axis="高" label="高 (mm)" value={mm!.h} min={20} max={250} onChange={value => change({ ...design, customSize: { ...design.customSize!, [design.orientation === 'portrait' ? 'heightMm' : 'widthMm']: value } })}/> : <span>高<br/>{mm!.h} mm</span>}
 
           </div>
@@ -234,6 +277,23 @@ function ImageAdjustments({ layer, patch }: { layer: DesignLayer; patch: (change
     {slider('飽和度', 'saturation', saturation, 0, 2)}
     <label>模糊 <output>{blurMm ? `${blurMm.toFixed(1)} mm` : '關閉'}</output><input aria-label="模糊" type="range" min="0" max="10" step="0.1" value={blurMm} onChange={e => patch({ blurMm: +e.target.value })}/></label>
     <small>效果會同步套用到成品預覽與製作檔；模糊限制在圖片框內。</small>
+  </section>;
+}
+function ImageCropControls({ layer, active, start, ratio, apply, cancel, reset }: { layer: DesignLayer; active: boolean; start: () => void; ratio: (ratio: number | null) => void; apply: () => void; cancel: () => void; reset: () => void }) {
+  const cropped = layer.cropWidth !== undefined || layer.cropHeight !== undefined;
+  return <section className="image-crop-controls" aria-label="圖片裁切">
+    <div className="image-adjustment-heading"><b>裁切與取景</b>{cropped && !active && <button type="button" onClick={reset}>還原完整圖片</button>}</div>
+    {!active ? <><button type="button" className="crop-start" onClick={start}>{cropped ? '重新裁切' : '開始裁切'}</button><small>進入後直接拖曳畫布上的框線、四邊或四角；原始素材不會被修改。</small></> : <>
+      <div className="crop-ratios" role="group" aria-label="裁切比例">
+        <button type="button" onClick={() => ratio(null)}>自由</button>
+        <button type="button" onClick={() => ratio(1)}>1:1</button>
+        <button type="button" onClick={() => ratio(4 / 3)}>4:3</button>
+        <button type="button" onClick={() => ratio(3 / 4)}>3:4</button>
+        <button type="button" onClick={() => ratio(16 / 9)}>16:9</button>
+      </div>
+      <small className="crop-live-help">深色區域會被裁掉；拖框內移動整個範圍。</small>
+      <div className="crop-actions"><button type="button" onClick={cancel}>取消</button><button type="button" className="primary" onClick={apply}>套用裁切</button></div>
+    </>}
   </section>;
 }
 function DimensionControl({ axis, vertical = false, ...props }: { axis: string; vertical?: boolean; label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {

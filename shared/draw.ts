@@ -13,6 +13,16 @@ export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: numbe
   ctx.fillRect(0, 0, w, h); ctx.restore();
 }
 export type RenderMode = 'preview' | 'production' | 'mask';
+export function imageCropRect(l: DesignLayer, image: CanvasImageSource) {
+  if (l.cropWidth === undefined || l.cropHeight === undefined) return null;
+  const source = image as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number; width?: number; height?: number };
+  const sourceWidth = Number(source.naturalWidth || source.videoWidth || source.width || 0);
+  const sourceHeight = Number(source.naturalHeight || source.videoHeight || source.height || 0);
+  if (!sourceWidth || !sourceHeight || !l.width || !l.height) return null;
+  const width = Math.min(1 - (l.cropX ?? 0), l.cropWidth) * sourceWidth;
+  const height = Math.min(1 - (l.cropY ?? 0), l.cropHeight) * sourceHeight;
+  return { x: (l.cropX ?? 0) * sourceWidth, y: (l.cropY ?? 0) * sourceHeight, width, height };
+}
 export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Template, mode: RenderMode = 'preview') {
   const area = photoImageArea(d, t); if (!area) return;
   const { w, h } = dimensions(d, t);
@@ -53,7 +63,9 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
     ctx.filter = filters.join(' ');
     // A blur expands beyond the image edge; keep it inside the selected picture box.
     ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
-    ctx.drawImage(image, 0, 0, l.width, l.height);
+    const crop = imageCropRect(l, image);
+    if (crop) ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, l.width, l.height);
+    else ctx.drawImage(image, 0, 0, l.width, l.height);
   }
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;

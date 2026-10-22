@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCanvas } from '@napi-rs/canvas';
-import { drawLayer } from '../shared/draw';
+import { drawLayer, imageCropRect } from '../shared/draw';
 import { layerSchema, newLayer } from '../shared/model';
 
 test('image adjustments survive validation and affect rendered pixels', () => {
@@ -19,4 +19,21 @@ test('image adjustments survive validation and affect rendered pixels', () => {
   assert.ok(changed[0] > original[0]);
   assert.notDeepEqual([...changed], [...original]);
   assert.throws(() => layerSchema.parse({ ...base, blurMm: 10.1 }));
+});
+
+test('image crop keeps a focal area and survives validation', () => {
+  const source = createCanvas(20, 10), sourceContext = source.getContext('2d');
+  sourceContext.fillStyle = '#ff0000'; sourceContext.fillRect(0, 0, 10, 10);
+  sourceContext.fillStyle = '#0000ff'; sourceContext.fillRect(10, 0, 10, 10);
+  const base = newLayer('image', { assetId: crypto.randomUUID(), x: 0, y: 0, width: 10, height: 10 });
+  const left = layerSchema.parse({ ...base, cropX: 0, cropY: 0, cropWidth: .5, cropHeight: 1 });
+  const right = layerSchema.parse({ ...base, cropX: .5, cropY: 0, cropWidth: .5, cropHeight: 1 });
+  assert.deepEqual(imageCropRect(left, source as unknown as CanvasImageSource), { x: 0, y: 0, width: 10, height: 10 });
+  assert.deepEqual(imageCropRect(right, source as unknown as CanvasImageSource), { x: 10, y: 0, width: 10, height: 10 });
+  const leftOutput = createCanvas(10, 10), rightOutput = createCanvas(10, 10);
+  drawLayer(leftOutput.getContext('2d') as unknown as CanvasRenderingContext2D, left, source as unknown as CanvasImageSource);
+  drawLayer(rightOutput.getContext('2d') as unknown as CanvasRenderingContext2D, right, source as unknown as CanvasImageSource);
+  assert.ok(leftOutput.getContext('2d').getImageData(5, 5, 1, 1).data[0] > 240);
+  assert.ok(rightOutput.getContext('2d').getImageData(5, 5, 1, 1).data[2] > 240);
+  assert.throws(() => layerSchema.parse({ ...base, cropX: .8, cropWidth: 1.1 }));
 });

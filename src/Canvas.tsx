@@ -23,10 +23,11 @@ export function useImages(assets: Asset[]) {
   return { images, failed };
 }
 export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number };
-type Props = { liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
+export type CropBox = { x: number; y: number; width: number; height: number };
+type Props = { cropBox?: CropBox | null; setCropBox?: (box: CropBox) => void; liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
 type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
-export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany }: Props) {
+export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox }: Props) {
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
@@ -60,9 +61,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   useEffect(() => {
     if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
     const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
-    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint && !selectedIds.length ? [node] : []);
+    transformRef.current?.nodes(node && current?.visible && !current.locked && !disabled && !paint && !cropBox && !selectedIds.length ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, disabled, paint, selectedIds, bounded, px, py, pw, ph]);
+  }, [selected, current, disabled, paint, cropBox, selectedIds, bounded, px, py, pw, ph]);
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
@@ -94,7 +95,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   }
   function pointer(stage:Konva.Stage){ const p=stage.getPointerPosition()!;return{x:p.x/scale-pad-b,y:p.y/scale-pad-b}; }
   function beginMarquee(e:Konva.KonvaEventObject<MouseEvent|TouchEvent>){
-    if(disabled||paint||e.target!==e.target.getStage())return;
+    if(disabled||paint||cropBox||e.target!==e.target.getStage())return;
     const start=pointer(e.target.getStage()!);const next={start,end:start,add:'shiftKey' in e.evt&&e.evt.shiftKey};
     marqueeRef.current=next;setMarquee(next);select(null);
   }
@@ -109,6 +110,21 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   }
   const selectedBounds=design.layers.filter(l=>selectedIds.includes(l.id)&&l.visible&&!l.locked).map(l=>({id:l.id,...layerBounds(l)}));
   const marqueeBox=marquee&&{x:Math.min(marquee.start.x,marquee.end.x),y:Math.min(marquee.start.y,marquee.end.y),width:Math.abs(marquee.end.x-marquee.start.x),height:Math.abs(marquee.end.y-marquee.start.y),crossing:marquee.end.x<marquee.start.x};
+  const cropHandles = cropBox ? [
+    ['nw', cropBox.x, cropBox.y], ['n', cropBox.x + cropBox.width / 2, cropBox.y], ['ne', cropBox.x + cropBox.width, cropBox.y],
+    ['e', cropBox.x + cropBox.width, cropBox.y + cropBox.height / 2], ['se', cropBox.x + cropBox.width, cropBox.y + cropBox.height],
+    ['s', cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height], ['sw', cropBox.x, cropBox.y + cropBox.height], ['w', cropBox.x, cropBox.y + cropBox.height / 2],
+  ] as const : [];
+  function resizeCrop(handle: string, x: number, y: number) {
+    if (!cropBox || !current || !setCropBox) return;
+    const min = Math.max(.8, 8 / scale), right = cropBox.x + cropBox.width, bottom = cropBox.y + cropBox.height;
+    let left = cropBox.x, top = cropBox.y, nextRight = right, nextBottom = bottom;
+    if (handle.includes('w')) left = Math.max(0, Math.min(right - min, x));
+    if (handle.includes('e')) nextRight = Math.min(current.width, Math.max(left + min, x));
+    if (handle.includes('n')) top = Math.max(0, Math.min(bottom - min, y));
+    if (handle.includes('s')) nextBottom = Math.min(current.height, Math.max(top + min, y));
+    setCropBox({ x: left, y: top, width: nextRight - left, height: nextBottom - top });
+  }
   return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
     <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={beginMarquee} onTouchStart={beginMarquee} onMouseMove={moveMarquee} onTouchMove={moveMarquee} onMouseUp={finishMarquee} onTouchEnd={finishMarquee}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
@@ -116,7 +132,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
         <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
           <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
-            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
+            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
               onClick={e => { if(e.evt.shiftKey)selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
@@ -130,6 +146,18 @@ export function EditorCanvas({ design, template, images, selected, select, commi
             />)}
             {ink && <Shape x={ink.x} y={ink.y} listening={false} sceneFunc={ctx => drawLayer(ctx._context, ink)}/>}
             <Shape listening={false} sceneFunc={ctx => drawPhotoBorder(ctx._context, design, template)}/>
+            {cropBox && current?.kind === 'image' && <Group x={current.x} y={current.y} rotation={current.rotation}>
+              <Rect x={0} y={0} width={current.width} height={cropBox.y} fill="#10201c99" listening={false}/>
+              <Rect x={0} y={cropBox.y + cropBox.height} width={current.width} height={Math.max(0, current.height - cropBox.y - cropBox.height)} fill="#10201c99" listening={false}/>
+              <Rect x={0} y={cropBox.y} width={cropBox.x} height={cropBox.height} fill="#10201c99" listening={false}/>
+              <Rect x={cropBox.x + cropBox.width} y={cropBox.y} width={Math.max(0, current.width - cropBox.x - cropBox.width)} height={cropBox.height} fill="#10201c99" listening={false}/>
+              <Rect x={cropBox.x} y={cropBox.y} width={cropBox.width} height={cropBox.height} fill="rgba(255,255,255,0.001)" stroke="#ffffff" strokeWidth={Math.max(.35, 1.5 / scale)} draggable
+                dragBoundFunc={pos => ({ x: Math.max(0, Math.min(current.width - cropBox.width, pos.x)), y: Math.max(0, Math.min(current.height - cropBox.height, pos.y)) })}
+                onDragMove={e => setCropBox?.({ ...cropBox, x: e.target.x(), y: e.target.y() })}/>
+              {[1 / 3, 2 / 3].flatMap(n => [<Line key={`v${n}`} points={[cropBox.x + cropBox.width * n, cropBox.y, cropBox.x + cropBox.width * n, cropBox.y + cropBox.height]} stroke="#ffffff99" strokeWidth={Math.max(.2, .7 / scale)} listening={false}/>, <Line key={`h${n}`} points={[cropBox.x, cropBox.y + cropBox.height * n, cropBox.x + cropBox.width, cropBox.y + cropBox.height * n]} stroke="#ffffff99" strokeWidth={Math.max(.2, .7 / scale)} listening={false}/>])}
+              {cropHandles.map(([handle, x, y]) => <Rect key={handle} x={x} y={y} offsetX={Math.max(1.3, 5 / scale)} offsetY={Math.max(1.3, 5 / scale)} width={Math.max(2.6, 10 / scale)} height={Math.max(2.6, 10 / scale)} fill="#ffffff" stroke="#173f36" strokeWidth={Math.max(.25, 1 / scale)} draggable
+                onDragMove={e => resizeCrop(handle, e.target.x(), e.target.y())}/>) }
+            </Group>}
           </Group>
         </Group>
         {slot && <Rect x={b + slot.x} y={b + slot.y} width={slot.width} height={slot.height} cornerRadius={slot.radius} fill="#dbe3db" stroke="#7a8e82" strokeWidth={0.25} onClick={() => select(null)} onTap={() => select(null)}/>}
