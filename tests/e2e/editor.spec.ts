@@ -3,8 +3,8 @@ import sharp from 'sharp';
 
 async function draft(page: Page) { return page.evaluate(async () => (await fetch(`/api/designs/${localStorage.getItem('wanshi:last-design')}`)).json()); }
 async function upload(page: Page) {
-  const png = await sharp({ create: { width: 640, height: 480, channels: 4, background: '#cb674d' } }).png().toBuffer();
-  const webp = await sharp({ create: { width: 300, height: 300, channels: 4, background: '#3a857a' } }).webp().toBuffer();
+  const png = await sharp({ create: { width: 1600, height: 1200, channels: 4, background: '#cb674d' } }).png().toBuffer();
+  const webp = await sharp({ create: { width: 1200, height: 1200, channels: 4, background: '#3a857a' } }).webp().toBuffer();
   await page.getByTestId('file-upload').setInputFiles([{ name: '暖色照片.png', mimeType: 'image/png', buffer: png }, { name: '青色照片.webp', mimeType: 'image/webp', buffer: webp }]);
   await expect(page.locator('.save-state')).toHaveText('所有變更已儲存');
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
@@ -54,7 +54,8 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
   await page.getByLabel('文字內容').fill('春日紀念\n屬於你的美好');
   await page.getByRole('button', { name: /確認設計與加入購物車/ }).click(); await page.getByRole('button', { name: '確認並加入購物車', exact: true }).click();
   const cart = page.getByRole('dialog', { name: '購物車', exact: true });
-  await expect(cart.getByRole('link', { name: '下載製作包', exact: true })).toBeVisible();
+  await expect(cart.getByText('製作檔已安全送至工作室', { exact: false })).toBeVisible();
+  await expect(cart.getByRole('link', { name: '下載製作包', exact: true })).toHaveCount(0);
   await cart.getByRole('button', { name: '繼續設計', exact: true }).click();
   const version = (await draft(page)).versions[0];
   const snapshot = await (await page.request.get(`/api/versions/${version.id}`)).json();
@@ -62,7 +63,7 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
   await expect.poll(async () => (await draft(page)).design.material).toBe('gold');
   expect(await (await page.request.get(`/api/versions/${version.id}`)).json()).toEqual(snapshot);
   await page.getByRole('button', { name: '購物車 1', exact: true }).click();
-  const downloadPromise = page.waitForEvent('download'); await cart.getByRole('link', { name: '下載製作包', exact: true }).click(); const download = await downloadPromise; expect(download.suggestedFilename()).toMatch(/\.zip$/); expect(await download.failure()).toBeNull();
+  expect((await page.request.get(`/api/versions/${version.id}/package.zip`)).status()).toBe(401);
   await page.screenshot({ path: 'test-results/desktop.png', fullPage: true }); expect(errors).toEqual([]);
 });
 test('mobile touch moves a layer and restores it after reload', async ({ browser }) => {

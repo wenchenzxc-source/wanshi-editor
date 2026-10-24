@@ -2,25 +2,25 @@
   {
     "id": "a5-plaque-v1",
     "name": "A5 飾牌",
-    "version": 1,
+    "version": 2,
     "widthMm": 148,
     "heightMm": 210,
     "bleedMm": 3,
     "safeMm": 5,
-    "dpi": 300,
+    "dpi": 600,
     "noProcess": []
   },
   {
     "id": "acrylic-block-v1",
     "name": "壓克力磚",
-    "version": 3,
+    "version": 4,
     "allowCustomSize": true,
     "presentation": "acrylic-block",
     "widthMm": 100,
     "heightMm": 100,
     "bleedMm": 0,
     "safeMm": 1,
-    "dpi": 300,
+    "dpi": 600,
     "noProcess": [],
     "allowedMaterials": [
       "clear"
@@ -73,7 +73,7 @@
   {
     "id": "acrylic-badge-v1",
     "name": "壓克力識別牌",
-    "version": 3,
+    "version": 4,
     "cornerRadiusMm": 3,
     "thicknessMm": 3,
     "presentation": "acrylic-badge",
@@ -81,7 +81,7 @@
     "heightMm": 90,
     "bleedMm": 0,
     "safeMm": 1,
-    "dpi": 300,
+    "dpi": 600,
     "noProcess": [],
     "sizes": [
       {

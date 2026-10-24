@@ -1,11 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { templates, type Template } from '../shared/model';
+import { PRINT_OUTPUT_PPI } from '../shared/print-quality';
 const templateSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/), name: z.string().min(1), version: z.number().int().positive(),
   widthMm: z.number().min(10).max(600), heightMm: z.number().min(10).max(600),
   cornerRadiusMm: z.number().min(0).max(10).optional(),
-  bleedMm: z.number().min(0).max(30), safeMm: z.number().min(0).max(50), dpi: z.number().int().min(72).max(600),
+  bleedMm: z.number().min(0).max(30), safeMm: z.number().min(0).max(50), dpi: z.literal(PRINT_OUTPUT_PPI),
   presentation: z.enum(['plaque', 'acrylic-block', 'acrylic-badge', 'photo-holder']).optional(),
   allowedMaterials: z.array(z.enum(['clear', 'black', 'white', 'iridescent', 'gold', 'silver', 'roseGold'])).min(1).optional(),
   allowCustomSize: z.boolean().optional(), thicknessMm: z.number().positive().optional(),

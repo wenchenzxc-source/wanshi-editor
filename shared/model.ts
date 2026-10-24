@@ -94,18 +94,18 @@ export function resolveTemplate(d: Pick<Design, 'sizeId' | 'customSize'>, t: Tem
 }
 export type Asset = { libraryArtworkId?: string; deletedAt?: string; previewUrl?: string; id: string; designId: string; originalName: string; mime: string; width: number; height: number; sha256: string; sourceAssetId?: string; variant: 'original' | 'cutout' };
 export type VersionInfo = { id: string; createdAt: string; revision: number; orderItemId: string | null };
-export const templates: Template[] = [{ id: 'a5-plaque-v1', name: 'A5 飾牌', version: 1, widthMm: 148, heightMm: 210, bleedMm: 3, safeMm: 5, dpi: 300, noProcess: [] }, { id: 'acrylic-block-v1', name: '壓克力磚', version: 3, allowCustomSize: true, presentation: 'acrylic-block', widthMm: 100, heightMm: 100, bleedMm: 0, safeMm: 1, dpi: 300, noProcess: [], allowedMaterials: ['clear'], sizes: [
+export const templates: Template[] = [{ id: 'a5-plaque-v1', name: 'A5 飾牌', version: 2, widthMm: 148, heightMm: 210, bleedMm: 3, safeMm: 5, dpi: 600, noProcess: [] }, { id: 'acrylic-block-v1', name: '壓克力磚', version: 4, allowCustomSize: true, presentation: 'acrylic-block', widthMm: 100, heightMm: 100, bleedMm: 0, safeMm: 1, dpi: 600, noProcess: [], allowedMaterials: ['clear'], sizes: [
   { id: 'mini-friend', name: '迷你飯友 · 30 × 20 × 5 mm', widthMm: 20, heightMm: 30, thicknessMm: 5 },
   { id: 'friend', name: '飯友 · 50 × 30 × 10 mm', widthMm: 30, heightMm: 50, thicknessMm: 10 },
   { id: 'small-block', name: '小立磚 · 100 × 60 × 20 mm', widthMm: 60, heightMm: 100, thicknessMm: 20 },
   { id: '100x100', retired: true, name: '100 × 100 mm', widthMm: 100, heightMm: 100 },
   { id: '100x150', retired: true, name: '100 × 150 mm', widthMm: 100, heightMm: 150 },
   { id: '150x200', retired: true, name: '150 × 200 mm', widthMm: 150, heightMm: 200 },
-] }, { id: 'acrylic-badge-v1', name: '壓克力識別牌', version: 3, cornerRadiusMm: 3, thicknessMm: 3, presentation: 'acrylic-badge', widthMm: 50, heightMm: 90, bleedMm: 0, safeMm: 1, dpi: 300, noProcess: [], sizes: [
+] }, { id: 'acrylic-badge-v1', name: '壓克力識別牌', version: 4, cornerRadiusMm: 3, thicknessMm: 3, presentation: 'acrylic-badge', widthMm: 50, heightMm: 90, bleedMm: 0, safeMm: 1, dpi: 600, noProcess: [], sizes: [
   { id: '50x90', name: '名片型', widthMm: 50, heightMm: 90 },
   { id: '60x90', name: '加寬型', widthMm: 60, heightMm: 90 },
   { id: '80x80', name: '方形', widthMm: 80, heightMm: 80 },
-] }, { id: 'photo-holder-v1', name: '照片立／掛牌', version: 1, presentation: 'photo-holder', widthMm: 50, heightMm: 76, bleedMm: 0, safeMm: 0, dpi: 300, noProcess: [], allowedMaterials: ['white'], sizes: [
+] }, { id: 'photo-holder-v1', name: '照片立／掛牌', version: 2, presentation: 'photo-holder', widthMm: 50, heightMm: 76, bleedMm: 0, safeMm: 0, dpi: 600, noProcess: [], allowedMaterials: ['white'], sizes: [
   { id: 'small-photo', name: '小相紙', widthMm: 50, heightMm: 76 },
   { id: 'instax-mini', name: '拍立得 mini', widthMm: 54, heightMm: 86 },
 ] }];

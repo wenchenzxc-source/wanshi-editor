@@ -2,15 +2,16 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import archiver from 'archiver';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
 import { configuredStore, type StoreLike } from './store';
-import { fontPath, registerFont, render } from './render';
+import { customerPreview, fontPath, registerFont, render } from './render';
 import { fonts } from '../shared/fonts';
 import { artCatalog } from '../shared/artwork';
+import { imageQualityIssues, MIN_IMAGE_PPI } from '../shared/print-quality';
 
 type PrivateAsset = Asset & { owner: string };
 type Draft = { owner: string; design: Design; revision: number; updatedAt: string };
@@ -18,9 +19,31 @@ type Snapshot = Draft & { id: string; createdAt: string; template: Template; ass
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 const hash = (v: string | Buffer) => createHash('sha256').update(v).digest('hex');
 const idSchema = z.string().uuid();
-const previewBytes = (bytes: Buffer) => sharp(bytes).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 90 }).toBuffer();
-export async function createApp(dataDir: string, options: { templates?: Template[]; store?: StoreLike } = {}) {
+const previewBytes = async (bytes: Buffer, protectedArtwork = false) => protectedArtwork
+  ? sharp(await customerPreview(bytes)).webp({ quality: 86 }).toBuffer()
+  : sharp(bytes).rotate().resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 86 }).toBuffer();
+export async function createApp(dataDir: string, options: { templates?: Template[]; store?: StoreLike; studioToken?: string } = {}) {
   const app = express(), store = options.store || configuredStore(dataDir), catalog = options.templates || templates;
+  const studioToken = options.studioToken ?? process.env.STUDIO_ADMIN_TOKEN;
+  const studioSessions = new Map<string, number>();
+  const tokenMatches = (candidate?: string) => {
+    if (!studioToken || !candidate) return false;
+    const expected = Buffer.from(studioToken), actual = Buffer.from(candidate);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  };
+  const hasStudioAccess = (req: express.Request) => {
+    if (tokenMatches(req.get('x-studio-token'))) return true;
+    const id = req.headers.cookie?.match(/(?:^|; )wanshi_studio=([a-f0-9]{64})(?:;|$)/)?.[1];
+    const expires = id ? studioSessions.get(id) : undefined;
+    if (id && expires && expires > Date.now()) return true;
+    if (id) studioSessions.delete(id);
+    return false;
+  };
+  const requireStudio: express.RequestHandler = (req, _res, next) => {
+    if (!studioToken) return next(new HttpError(503, '工作室後台尚未設定 STUDIO_ADMIN_TOKEN'));
+    if (!hasStudioAccess(req)) return next(new HttpError(401, '請先登入工作室後台'));
+    next();
+  };
   await store.init(); registerFont();
   app.disable('x-powered-by');
   app.use('/api', (req, res, next) => {
@@ -33,6 +56,20 @@ export async function createApp(dataDir: string, options: { templates?: Template
     next();
   });
   app.use(express.json({ limit: '2mb' }));
+  app.post('/api/studio/login', (req, res, next) => {
+    const input = z.object({ token: z.string().min(1).max(500) }).parse(req.body);
+    if (!studioToken) return next(new HttpError(503, '工作室後台尚未設定 STUDIO_ADMIN_TOKEN'));
+    if (!tokenMatches(input.token)) return next(new HttpError(401, '工作室密碼錯誤'));
+    const id = randomBytes(32).toString('hex'), maxAge = 12 * 60 * 60 * 1000;
+    studioSessions.set(id, Date.now() + maxAge);
+    res.cookie('wanshi_studio', id, { httpOnly: true, sameSite: 'strict', secure: process.env.COOKIE_SECURE === 'true', maxAge, path: '/' });
+    res.json({ ok: true });
+  });
+  app.post('/api/studio/logout', requireStudio, (req, res) => {
+    const id = req.headers.cookie?.match(/(?:^|; )wanshi_studio=([a-f0-9]{64})(?:;|$)/)?.[1];
+    if (id) studioSessions.delete(id);
+    res.clearCookie('wanshi_studio', { path: '/' }); res.json({ ok: true });
+  });
   app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'image-adjustments-v19' }));
   app.post('/api/session', async (req, res) => {
     const existing = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
@@ -43,6 +80,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     res.json({ ok: true });
   });
   app.use('/api', async (req, res, next) => {
+    if (req.path.startsWith('/studio/') || /^\/versions\/[a-f0-9-]+\/package\.zip$/.test(req.path)) return next();
     const token = req.headers.cookie?.match(/(?:^|; )wanshi=([a-f0-9]{64})(?:;|$)/)?.[1];
     if (!token || !await store.get('sessions', hash(token))) return next(new HttpError(401, '請重新載入以建立私有工作階段'));
     res.locals.owner = hash(token); next();
@@ -168,10 +206,11 @@ export async function createApp(dataDir: string, options: { templates?: Template
   });
   app.get('/api/assets/:id', async (req, res) => {
     const a = await ownedAsset(req.params.id, res.locals.owner);
+    if (req.query.original === '1' && a.libraryArtworkId) throw new HttpError(403, '工作室素材原檔不提供客戶下載');
     if (store.signedDownloadUrl) return res.redirect(302, await store.signedDownloadUrl(req.query.original === '1' ? 'files' : 'previews', a.id, req.query.original === '1' ? 'bin' : 'webp', 300));
     const source = await store.readBlob('files', a.id, 'bin');
     if (req.query.original === '1') { res.type(a.mime); return res.send(source); }
-    res.type('png').send(await sharp(source).rotate().resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true }).png().toBuffer());
+    res.type('webp').send(await previewBytes(source, Boolean(a.libraryArtworkId)));
   });
   app.delete('/api/assets/:id', async (req, res) => {
     await store.exclusive(`asset-${req.params.id}`, async () => {
@@ -200,19 +239,25 @@ export async function createApp(dataDir: string, options: { templates?: Template
       if (revision !== d.revision) throw new HttpError(409, '確認前請先儲存最新設計');
       if (d.design.photoHolder?.photoService === 'print' && !d.design.layers.some(l => l.visible && l.opacity > 0 && l.kind !== 'uv' && l.face !== 'back')) throw new HttpError(400, '加購照片列印請先加入照片、文字或圖稿');
       if (d.design.photoHolder && d.design.layers.some(l => l.kind === 'uv' && l.visible)) throw new HttpError(400, '照片列印不支援 UV 微浮雕，請隱藏或刪除 UV 圖層');
-      const v: Snapshot = { ...d, id: randomUUID(), createdAt: new Date().toISOString(), template: resolveTemplate(d.design, catalog.find(t => t.id === d.design.templateId)!), assets: await assetsFor(d.design.id, d.owner) };
+      const versionAssets = await assetsFor(d.design.id, d.owner);
+      const qualityIssues = imageQualityIssues(d.design, versionAssets);
+      if (qualityIssues.length) throw new HttpError(400, `圖片有效解析度低於 ${MIN_IMAGE_PPI} PPI：${qualityIssues.map(issue => `${issue.name}（${issue.ppi} PPI）`).join('、')}`);
+      const v: Snapshot = { ...d, id: randomUUID(), createdAt: new Date().toISOString(), template: resolveTemplate(d.design, catalog.find(t => t.id === d.design.templateId)!), assets: versionAssets };
       // Persist actual output bytes at confirmation: later fonts/render changes cannot change an order.
       const front = { ...v.design, activeFace: 'front' as const };
       const preview = await render(front, v.template, v.assets, store, 'preview', false);
       const production = await render(front, v.template, v.assets, store, 'production');
       await store.writeBlob('files', `${v.id}-preview`, 'png', preview, true, 'image/png');
+      await store.writeBlob('files', `${v.id}-customer-preview`, 'png', await customerPreview(preview), true, 'image/png');
       await store.writeBlob('files', `${v.id}-production`, 'png', production, true, 'image/png');
       if (v.design.layers.some(l => l.kind === 'uv' && l.visible && l.face !== 'back')) await store.writeBlob('files', `${v.id}-mask`, 'png', await render(front, v.template, v.assets, store, 'mask'), true, 'image/png');
       if (v.design.duplex && !v.design.printStack) {
         const back = { ...v.design, activeFace: 'back' as const };
         for (const mode of ['preview', 'production', 'mask'] as const) {
           if (mode === 'mask' && !back.layers.some(l => l.kind === 'uv' && l.visible && l.face === 'back')) continue;
-          await store.writeBlob('files', `${v.id}-back-${mode}`, 'png', await render(back, v.template, v.assets, store, mode, mode !== 'preview'), true, 'image/png');
+          const output = await render(back, v.template, v.assets, store, mode, mode !== 'preview');
+          await store.writeBlob('files', `${v.id}-back-${mode}`, 'png', output, true, 'image/png');
+          if (mode === 'preview') await store.writeBlob('files', `${v.id}-back-customer-preview`, 'png', await customerPreview(output), true, 'image/png');
         }
       }
       await store.put('versions', v.id, v, true);
@@ -223,6 +268,24 @@ export async function createApp(dataDir: string, options: { templates?: Template
     const v = await store.get<Snapshot>('versions', idSchema.parse(id));
     if (!v || v.owner !== owner) throw new HttpError(404, '找不到確認版本'); return v;
   };
+  const studioSnapshot = async (id: string) => {
+    const v = await store.get<Snapshot>('versions', idSchema.parse(id));
+    if (!v) throw new HttpError(404, '找不到確認版本'); return v;
+  };
+  app.get('/api/studio/status', requireStudio, (_req, res) => res.json({ ok: true, storage: store.signedDownloadUrl ? 'private-cloud' : 'private-local' }));
+  app.get('/api/studio/orders', requireStudio, async (_req, res) => {
+    const rows = (await store.list<Snapshot>('versions')).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(v => ({
+      id: v.id, createdAt: v.createdAt, revision: v.revision, designId: v.design.id, name: v.design.name,
+      product: v.template.name, dimensions: dimensions(v.design, v.template), orderItemId: v.design.orderItemId,
+      material: v.design.material, photoHolder: v.design.photoHolder,
+    }));
+    res.json(rows);
+  });
+  app.get('/api/studio/versions/:id/preview.png', requireStudio, async (req, res) => {
+    const v = await studioSnapshot(String(req.params.id));
+    if (store.signedDownloadUrl) return res.redirect(302, await store.signedDownloadUrl('files', `${v.id}-preview`, 'png', 120));
+    res.type('png').send(await store.readBlob('files', `${v.id}-preview`, 'png'));
+  });
   type CartItem = { id: string; versionId: string; quantity: number; addedAt: string };
   const getCart = async (owner: string) => await store.get<CartItem[]>('carts', owner) || [];
   app.get('/api/cart', async (_req, res) => {
@@ -261,18 +324,20 @@ export async function createApp(dataDir: string, options: { templates?: Template
     const buffer = artwork.file ? await readFile(path.resolve('public/artwork', artwork.file)) : await sharp(Buffer.from(artwork.svg!)).resize(1600, 1600).png().toBuffer();
     const metadata = await sharp(buffer).metadata();
     const asset: PrivateAsset = { id: randomUUID(), designId: draft.design.id, owner: res.locals.owner, libraryArtworkId: artwork.id, originalName: `${artwork.name}.png`, mime: 'image/png', width: metadata.width!, height: metadata.height!, sha256: hash(buffer), variant: 'original' };
-    await store.writeBlob('files', asset.id, 'bin', buffer, true, asset.mime); if (store.signedDownloadUrl) await store.writeBlob('previews', asset.id, 'webp', await previewBytes(buffer), true, 'image/webp');
+    await store.writeBlob('files', asset.id, 'bin', buffer, true, asset.mime); if (store.signedDownloadUrl) await store.writeBlob('previews', asset.id, 'webp', await previewBytes(buffer, true), true, 'image/webp');
     await store.put('assets', asset.id, asset, true);
     const { owner: _, ...publicAsset } = asset; res.status(201).json(publicAsset);
   });
   app.get('/api/versions/:id', async (req, res) => { const { owner: _, ...v } = await snapshot(req.params.id, res.locals.owner); res.json(v); });
   app.get('/api/versions/:id/preview.png', async (req, res) => {
     const v = await snapshot(req.params.id, res.locals.owner);
-    if (store.signedDownloadUrl) return res.redirect(302, await store.signedDownloadUrl('files', `${v.id}-preview`, 'png', 300));
-    res.type('png').send(await store.readBlob('files', `${v.id}-preview`, 'png'));
+    let proof: Buffer;
+    try { proof = await store.readBlob('files', `${v.id}-customer-preview`, 'png'); }
+    catch { proof = await customerPreview(await store.readBlob('files', `${v.id}-preview`, 'png')); await store.writeBlob('files', `${v.id}-customer-preview`, 'png', proof, false, 'image/png'); }
+    res.type('png').send(proof);
   });
-  app.get('/api/versions/:id/package.zip', async (req, res) => {
-    const v = await snapshot(req.params.id, res.locals.owner);
+  app.get('/api/versions/:id/package.zip', requireStudio, async (req, res) => {
+    const v = await studioSnapshot(String(req.params.id));
     const cloud = Boolean(store.signedDownloadUrl), chunks: Buffer[] = [];
     const zip = archiver('zip', { zlib: { level: 6 } });
     const collected = cloud ? new Promise<void>((resolve, reject) => { zip.on('data', chunk => chunks.push(Buffer.from(chunk))); zip.on('end', resolve); zip.on('error', reject); }) : Promise.resolve();
@@ -308,7 +373,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
   });
   app.use('/api', (_req, _res, next) => next(new HttpError(404, '找不到 API')));
   app.use(express.static(path.resolve('dist')));
-  app.get('/', (_req, res) => res.sendFile(path.resolve('dist/index.html')));
+  app.get(['/', '/studio'], (_req, res) => res.sendFile(path.resolve('dist/index.html')));
   app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (res.headersSent) return;
     const status = error instanceof z.ZodError || error instanceof multer.MulterError ? 400 : error.status || 500;

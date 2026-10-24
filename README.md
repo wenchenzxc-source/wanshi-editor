@@ -74,9 +74,9 @@ node --import tsx server/index.ts
 
 ### 模板
 
-`shared/model.ts` 為預設 A5 模板：148 × 210 mm，直／橫式。出血 3 mm、安全區 5 mm、300 DPI 是本階段的**可修改初始設定**，上線前應由加工廠確認。未取得孔位資料，因此 A5 預設沒有不可加工區，沒有捏造孔位。
+`shared/model.ts` 為預設 A5 模板：148 × 210 mm，直／橫式。出血 3 mm、安全區 5 mm、600 PPI 圖稿輸出是本階段的**可修改初始設定**，上線前應由加工廠確認。未取得孔位資料，因此 A5 預設沒有不可加工區，沒有捏造孔位。
 
-設定 `TEMPLATES_FILE` 指向 `templates.example.json` 格式的 JSON 陣列即可替換目錄，不需修改前端。`noProcess` 使用直式成品左上角為原點的矩形毫米座標，欄位為 `x/y/width/height/label`，橫式自動旋轉。畫布以紅色標示；它是印前檢查提示，不會自動刪除覆蓋其上的客戶圖層。加工前需檢查該區域。
+設定 `TEMPLATES_FILE` 指向 `templates.example.json` 格式的 JSON 陣列即可替換目錄，不需修改前端。為維持本專案的列印品質保證，自訂模板的 `dpi` 必須為 600。`noProcess` 使用直式成品左上角為原點的矩形毫米座標，欄位為 `x/y/width/height/label`，橫式自動旋轉。畫布以紅色標示；它是印前檢查提示，不會自動刪除覆蓋其上的客戶圖層。加工前需檢查該區域。
 
 增加模板時請使用新的版本 ID（例如 `a5-plaque-v2`），並保留舊 ID，以便重開舊草稿。確認版本內已封存完整模板。總輸出限制 40MP，以避免不合理模板耗盡記憶體。
 
@@ -90,20 +90,30 @@ node --import tsx server/index.ts
 | --- | --- |
 | `originals/{assetId}.jpg/png/webp` | 這個設計確認當下所有上傳原圖，包括已從畫布移除的圖片 |
 | `cutouts/{assetId}.png` | 去背衍生檔，若有 |
-| `final-preview.png` | 客戶確認成品排版，裁切尺寸，含 UV 示意、不含輔助線 |
+| `final-preview.png` | 工作室製作包內的無浮水印成品預覽；客戶端不提供下載 |
 | `production-with-bleed.png` | 含出血的彩色加工圖，UV 圖層另行輸出 |
 | `design.json` | 完整可編輯圖層、座標、設定與 WooCommerce 預留欄位 |
 | `uv-mask.png` | 若有可見 UV 圖層：黑底白形狀，透明度轉灰階強度 |
 | `manifest.json` | 版本 ID、時間、模板、素材原始名稱、SHA-256、來源素材與訂單欄位 |
 | `README.txt` | 製作檔說明 |
 
-300 DPI 預設直式成品為 1748 × 2480 px，含出血 1819 × 2551 px（毫米 × DPI / 25.4 四捨五入）。PNG 寫入 DPI metadata。UV 遮罩與含出血彩圖同尺寸、同原點，可對位。字型使用隨附 Noto Sans TC；前後端共用 `shared/draw.ts` 路徑、排版與毫米資料。輸出用原始解析度圖片，前端工作圖最多 2000px 長邊，均處理 EXIF 方向。
+600 PPI 預設直式成品為 3496 × 4961 px，含出血 3638 × 5102 px（毫米 × PPI / 25.4 四捨五入）。正式彩圖與 UV 遮罩寫入 600 PPI density metadata，兩者同尺寸、同原點，可精確對位；工作室製作包內的 `final-preview.png` 使用 300 PPI。客戶已確認預覽另外壓到最長邊 1000px、96 PPI metadata，並在伺服器端永久合成重複浮水印。字型使用隨附 Noto Sans TC；前後端共用 `shared/draw.ts` 路徑、排版與毫米資料。輸出用原始解析度圖片，客戶端工作圖最多 1000px 長邊，均處理 EXIF 方向。
+
+印表機的 1440 DPI 是設備噴墨點密度，與圖稿的 PPI 不同。系統會在確認製作前檢查每張可見圖片經裁切、縮放後的有效解析度；低於 300 PPI 時，前端停用確認，伺服器也會拒絕建立製作版本。文字、形狀與合格圖片統一光柵化為 600 PPI 製作檔，再由印表機驅動使用最高品質／1440 DPI 模式輸出。這項檢查保證檔案端解析度門檻；實際成品質感仍受紙材、墨水、ICC、RIP 與機台校正影響。
 
 UV 預覽僅表達區域與相對強度，不模擬實際高度；輸出為 RGB PNG，並未實作印刷設備 ICC/CMYK、專色、RIP 或機台校正。
 
 ## 儲存與私有存取
 
-`DATA_DIR`（預設 `data/`）包含 `drafts/`、`assets/`、`files/`、`versions/`、`sessions/`。它不在靜態網站根目錄，所有圖片、版本、ZIP 需持有對應 HttpOnly/SameSite cookie 才能讀取。下載不使用公開靜態網址。請持久掛載並備份整個資料夾；不要只備份 JSON。
+`DATA_DIR`（預設 `data/`）包含 `drafts/`、`assets/`、`files/`、`versions/`、`sessions/`。它不在靜態網站根目錄。客戶只能讀取自己的草稿、上傳原圖與含浮水印低解析確認圖；600 PPI 製作包、工作室素材原檔與無浮水印預覽均需要工作室權限。請持久掛載並備份整個資料夾；不要只備份 JSON。
+
+## 工作室製作後台與私有雲端
+
+在伺服器環境設定長隨機值 `STUDIO_ADMIN_TOKEN`，重新啟動後由 `/studio` 登入。密碼只送到伺服器驗證，成功後使用 12 小時的 HttpOnly、SameSite=Strict 工作室 cookie；客戶購物車不再出現製作包下載連結。後台會列出所有已確認版本，只有後台可以查看無浮水印預覽及下載 600 PPI ZIP。
+
+正式環境設定 `SUPABASE_URL`、`SUPABASE_SECRET_KEY` 與私有 `SUPABASE_STORAGE_BUCKET` 後，原圖、預覽、600 PPI 彩圖、UV 遮罩與製作包都由伺服器寫入鎖定的 Supabase Storage bucket；service-role secret 只能留在伺服器環境變數，不可暴露給瀏覽器。這已符合「工作室後台或鎖定雲端硬碟」的保存需求，不需把 Google Drive 設成公開連結。
+
+畫面浮水印、停用下載與低解析預覽可有效阻止一般另存與截圖挪用，但任何能在螢幕顯示的內容都無法做到絕對 DRM。真正的保護邊界是伺服器不向客戶傳送無浮水印預覽、內建素材原檔與正式製作檔。
 
 本階段為本機／受控部署的**匿名瀏覽器工作階段**，不是會員系統。同一瀏覽器可重開，其他瀏覽器不能存取；清除 cookie 會失去原工作階段存取權。沒有帳號登入、密碼重設、跨裝置設計恢復或正式多租戶權限管理。API 預設只監聽 127.0.0.1。跨裝置測試需自訂 `HOST`／防火牆，且手機會是獨立工作階段。
 

@@ -25,15 +25,15 @@ function unzip(b: Buffer) {
   } return result;
 }
 test('private upload → editable draft → immutable confirmation → complete production ZIP', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-test-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-test-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
   let cookie = '';
-  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'X-Studio-Token': 'test-studio-token', ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
   try {
     assert.equal((await req('/designs')).status, 401);
     cookie = (await req('/session', 'POST')).headers.get('set-cookie')!.split(';')[0];
     const d = emptyDesign(); delete d.printStack; assert.equal((await req('/designs', 'POST', d)).status, 201);
-    const png = await sharp({ create: { width: 240, height: 160, channels: 4, background: '#ef3344' } }).png().toBuffer();
+    const png = await sharp({ create: { width: 1200, height: 800, channels: 4, background: '#ef3344' } }).png().toBuffer();
     const jpg = await sharp(png).jpeg().toBuffer(), webp = await sharp(png).webp().toBuffer();
     const form = new FormData();
     for (const [name, bytes] of [['test.png', png], ['test.jpg', jpg], ['test.webp', webp]] as const) form.append('files', new Blob([new Uint8Array(bytes)]), name);
@@ -48,6 +48,8 @@ test('private upload → editable draft → immutable confirmation → complete 
     assert.equal((await req(`/designs/${d.id}/confirm`, 'POST', { revision: 1 })).status, 409);
     assert.deepEqual((await (await req(`/designs/${d.id}`)).json()).design, d);
     const confirm = await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 }); assert.equal(confirm.status, 201); const v = await confirm.json();
+    assert.equal((await fetch(`${url}/versions/${v.id}/package.zip`, { headers: { Cookie: cookie } })).status, 401);
+    const studioOrders = await (await req('/studio/orders')).json(); assert.equal(studioOrders[0].id, v.id);
     const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
     assert.deepEqual(JSON.parse(zip.get('design.json')!.toString()), d);
     assert.ok(zip.has('fonts/NotoSerifTC.ttf')); assert.ok(zip.has('fonts/NotoSerifTC-OFL.txt'));
@@ -55,10 +57,11 @@ test('private upload → editable draft → immutable confirmation → complete 
     assert.deepEqual(zip.get(`originals/${assets[1].id}.jpg`), jpg);
     assert.deepEqual(zip.get(`originals/${assets[2].id}.webp`), webp);
     const production = await sharp(zip.get('production-with-bleed.png')).metadata();
-    assert.equal(production.width, Math.round(154 / 25.4 * 300)); assert.equal(production.height, Math.round(216 / 25.4 * 300)); assert.equal(production.density, 300);
-    const preview = await sharp(zip.get('final-preview.png')).metadata(); assert.equal(preview.width, Math.round(148 / 25.4 * 300)); assert.equal(preview.height, Math.round(210 / 25.4 * 300));
+    assert.equal(production.width, Math.round(154 / 25.4 * templates[0].dpi)); assert.equal(production.height, Math.round(216 / 25.4 * templates[0].dpi)); assert.equal(production.density, templates[0].dpi);
+    const preview = await sharp(zip.get('final-preview.png')).metadata(); assert.equal(preview.width, Math.round(148 / 25.4 * 300)); assert.equal(preview.height, Math.round(210 / 25.4 * 300)); assert.equal(preview.density, 300);
+    const customerProof = await sharp(Buffer.from(await (await req(`/versions/${v.id}/preview.png`)).arrayBuffer())).metadata(); assert.ok(customerProof.width! <= 1000 && customerProof.height! <= 1000); assert.equal(customerProof.density, 96);
     const mask = await sharp(zip.get('uv-mask.png')).raw().toBuffer({ resolveWithObject: true });
-    const px = Math.round(63 / 25.4 * 300), py = Math.round(153 / 25.4 * 300), gray = mask.data[(py * mask.info.width + px) * mask.info.channels]; assert.ok(gray >= 126 && gray <= 129); assert.equal(mask.data[0], 0);
+    const px = Math.round(63 / 25.4 * templates[0].dpi), py = Math.round(153 / 25.4 * templates[0].dpi), gray = mask.data[(py * mask.info.width + px) * mask.info.channels]; assert.ok(gray >= 126 && gray <= 129); assert.equal(mask.data[0], 0);
     const originalVersion = await (await req(`/versions/${v.id}`)).json();
     assert.equal((await req(`/assets/${assets[0].id}`, 'DELETE')).status, 200);
     assert.ok((await (await req(`/designs/${d.id}`)).json()).assets[0].deletedAt || (await (await req(`/designs/${d.id}`)).json()).assets.some((a: Asset) => a.id === assets[0].id && a.deletedAt));
@@ -68,7 +71,7 @@ test('private upload → editable draft → immutable confirmation → complete 
     const zip2 = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
     for (const [key, value] of zip) assert.deepEqual(zip2.get(key), value, `${key} must remain immutable`);
     const v2 = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 3 })).json();
-    const landscape = await sharp(Buffer.from(await (await req(`/versions/${v2.id}/preview.png`)).arrayBuffer())).metadata(); assert.equal(landscape.width, preview.height); assert.equal(landscape.height, preview.width);
+    const landscape = await sharp(Buffer.from(await (await req(`/versions/${v2.id}/preview.png`)).arrayBuffer())).metadata(); assert.equal(landscape.width, customerProof.height); assert.equal(landscape.height, customerProof.width);
     d.material = 'gold'; d.duplex = true;
     assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 3 })).status, 400);
     d.material = 'clear'; d.activeFace = 'back';
@@ -104,12 +107,35 @@ test('template dimensions and render use configurable bleed, DPI and safe areas'
   assert.equal(sample[0], 255); assert.equal(sample[1], 0); assert.equal(sample[2], 0);
 });
 
+test('server refuses confirmation when a visible image is below 300 effective PPI', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-quality-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  let cookie = (await fetch(url + '/session', { method: 'POST' })).headers.get('set-cookie')!.split(';')[0];
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'X-Studio-Token': 'test-studio-token', ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+  try {
+    const design = emptyDesign();
+    assert.equal((await req('/designs', 'POST', design)).status, 201);
+    const bytes = await sharp({ create: { width: 120, height: 120, channels: 4, background: '#986dba' } }).png().toBuffer();
+    const form = new FormData(); form.append('files', new Blob([new Uint8Array(bytes)]), 'low-resolution.png');
+    const [asset] = await (await req(`/designs/${design.id}/assets`, 'POST', form)).json() as Asset[];
+    design.layers = [newLayer('image', { assetId: asset.id, name: '低解析照片', width: 85, height: 85 })];
+    assert.equal((await req(`/designs/${design.id}`, 'PUT', { design, baseRevision: 1 })).status, 200);
+    const response = await req(`/designs/${design.id}/confirm`, 'POST', { revision: 2 });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /低於 300 PPI.*低解析照片/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 
 test('acrylic block restricts material, restores size and exports selected dimensions', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-block-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-block-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
   const cookie = (await fetch(url + '/session', { method: 'POST' })).headers.get('set-cookie')!.split(';')[0];
-  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'X-Studio-Token': 'test-studio-token', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   try {
     const template = templates.find(t => t.id === 'acrylic-block-v1')!, d = emptyDesign(template);
     assert.equal(template.bleedMm, 0); assert.equal(template.safeMm, 1); assert.equal(d.material, 'clear'); assert.equal((await req('/designs', 'POST', d)).status, 201);
@@ -133,7 +159,7 @@ test('acrylic block restricts material, restores size and exports selected dimen
     const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 })).json();
     const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
     const meta = await sharp(zip.get('production-with-bleed.png')).metadata();
-    assert.equal(meta.width, Math.round(50 / 25.4 * 300)); assert.equal(meta.height, Math.round(30 / 25.4 * 300));
+    assert.equal(meta.width, Math.round(50 / 25.4 * template.dpi)); assert.equal(meta.height, Math.round(30 / 25.4 * template.dpi));
     assert.equal(JSON.parse(zip.get('manufacturing.json')!.toString()).thicknessMm, 10);
     d.sizeId = 'custom'; d.customSize = { widthMm: 55, heightMm: 80, thicknessMm: 15 };
     assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: { ...d, customSize: { ...d.customSize, thicknessMm: -1 } }, baseRevision: 2 })).status, 400);
@@ -143,7 +169,7 @@ test('acrylic block restricts material, restores size and exports selected dimen
     const settings = JSON.parse(customZip.get('manufacturing.json')!.toString());
     assert.equal(settings.requiresQuote, true); assert.equal(settings.thicknessMm, 15);
     const customMeta = await sharp(customZip.get('production-with-bleed.png')).metadata();
-    assert.equal(customMeta.width, Math.round(80 / 25.4 * 300)); assert.equal(customMeta.height, Math.round(55 / 25.4 * 300));
+    assert.equal(customMeta.width, Math.round(80 / 25.4 * template.dpi)); assert.equal(customMeta.height, Math.round(55 / 25.4 * template.dpi));
 
   } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }
 });
@@ -155,16 +181,16 @@ test('acrylic badge preset outputs use the selected physical size without bleed'
     const d = { ...emptyDesign(template), sizeId: size.id, orientation };
     const output = await render(d, template, [], new Store('unused'), 'production');
     const meta = await sharp(output).metadata();
-    assert.equal(meta.width, Math.round((orientation === 'portrait' ? size.widthMm : size.heightMm) * 300 / 25.4));
-    assert.equal(meta.height, Math.round((orientation === 'portrait' ? size.heightMm : size.widthMm) * 300 / 25.4));
+    assert.equal(meta.width, Math.round((orientation === 'portrait' ? size.widthMm : size.heightMm) * template.dpi / 25.4));
+    assert.equal(meta.height, Math.round((orientation === 'portrait' ? size.heightMm : size.widthMm) * template.dpi / 25.4));
   }
 });
 
 test('badge slots stay at the top and export transparent ink plus immutable cut geometry', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-slot-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-slot-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
   const cookie = (await fetch(url + '/session', { method: 'POST' })).headers.get('set-cookie')!.split(';')[0];
-  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'X-Studio-Token': 'test-studio-token', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   try {
     const d = emptyDesign(templates.find(t => t.id === 'acrylic-badge-v1')!);
     d.slot = { enabled: true, widthMm: 12, heightMm: 3 };
@@ -182,7 +208,8 @@ test('badge slots stay at the top and export transparent ink plus immutable cut 
       assert.equal(settings.thicknessMm, 3); assert.equal(settings.slot.y, 5);
       assert.equal(settings.slot.x, ((orientation === 'portrait' ? 50 : 90) - 12) / 2);
       assert.match(zip.get('slot-cut-path.svg')!.toString(), /y="5"/);
-      const left = Math.round((settings.slot.x + 6) * 300 / 25.4), top = Math.round(6 * 300 / 25.4);
+      const dpi = templates.find(t => t.id === 'acrylic-badge-v1')!.dpi;
+      const left = Math.round((settings.slot.x + 6) * dpi / 25.4), top = Math.round(6 * dpi / 25.4);
       const ink = await sharp(zip.get('production-with-bleed.png')).ensureAlpha().extract({ left, top, width: 1, height: 1 }).raw().toBuffer();
       assert.equal(ink[3], 0);
       const corner = await sharp(zip.get('production-with-bleed.png')).ensureAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer(); assert.equal(corner[3], 0);
@@ -200,7 +227,7 @@ test('accessory hole shapes and R4 corners remove ink at their exact geometry', 
   for (const a of badgeAccessories) {
     const d = { ...emptyDesign(t), badgeAccessory: a.id, badgeCornerRadiusMm: 4 as const, slot: { enabled: true, widthMm: a.widthMm, heightMm: a.heightMm, shape: a.shape }, layers: [newLayer('shape', { shape: 'rect' as const, x: 0, y: 0, width: 50, height: 90, fill: '#ff0000' })] };
     const output = await render(d, t, [], new Store('unused'), 'production');
-    const sample = async (x: number, y: number) => (await sharp(output).ensureAlpha().extract({ left: Math.round(x * 300 / 25.4), top: Math.round(y * 300 / 25.4), width: 1, height: 1 }).raw().toBuffer())[3];
+    const sample = async (x: number, y: number) => (await sharp(output).ensureAlpha().extract({ left: Math.round(x * t.dpi / 25.4), top: Math.round(y * t.dpi / 25.4), width: 1, height: 1 }).raw().toBuffer())[3];
     assert.equal(await sample(25, 5 + a.heightMm / 2), 0, a.id);
     assert.equal(await sample(0, 0), 0);
     assert.equal(await sample(4, 1), 255);
@@ -215,17 +242,17 @@ test('round holes follow left center right in the current orientation', async ()
     const slot = slotGeometry(d, t)!, w = orientation === 'portrait' ? 50 : 90;
     assert.equal(slot.x, position === 'left' ? 5 : position === 'right' ? w - 8 : (w - 3) / 2); assert.equal(slot.y, 5);
     const png = await render(d, t, [], new Store('unused'), 'production');
-    const pixel = await sharp(png).ensureAlpha().extract({ left: Math.round((slot.x + 1.5) * 300 / 25.4), top: Math.round(6.5 * 300 / 25.4), width: 1, height: 1 }).raw().toBuffer();
+    const pixel = await sharp(png).ensureAlpha().extract({ left: Math.round((slot.x + 1.5) * t.dpi / 25.4), top: Math.round(6.5 * t.dpi / 25.4), width: 1, height: 1 }).raw().toBuffer();
     assert.equal(pixel[3], 0);
   }
 });
 
 test('photo holder saves options and exports only purchased photo printing without changing confirmed versions', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-holder-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-holder-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r));
   const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
   let cookie = '';
-  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const req = (route: string, method = 'GET', body?: unknown) => fetch(url + route, { method, headers: { Cookie: cookie, 'X-Studio-Token': 'test-studio-token', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   try {
     const session = await req('/session', 'POST'); cookie = session.headers.get('set-cookie')!.split(';')[0];
     const t = templates.find(t => t.presentation === 'photo-holder')!;
@@ -249,7 +276,7 @@ test('photo holder saves options and exports only purchased photo printing witho
     assert.equal(options.desktopBase, true); assert.equal(options.rearNfc, true); assert.equal(options.printPhoto, true);
     assert.deepEqual(options.paperSizeMm, { width: 54, height: 86 }); assert.equal(options.frameDimensionsMm, null);
     const meta = await sharp(pack.get('photo-print.png')!).metadata();
-    assert.equal(meta.width, Math.round(54 * 300 / 25.4)); assert.equal(meta.height, Math.round(86 * 300 / 25.4));
+    assert.equal(meta.width, Math.round(54 * t.dpi / 25.4)); assert.equal(meta.height, Math.round(86 * t.dpi / 25.4));
     assert.deepEqual((await (await req(`/designs/${d.id}`)).json()).design.photoHolder, d.photoHolder);
     assert.deepEqual((await (await req(`/versions/${first.id}`)).json()).design.photoHolder, { base: false, nfc: false, photoService: 'own', paperLayout: 'full' });
     assert.ok(!unzip(Buffer.from(await (await req(`/versions/${first.id}/package.zip`)).arrayBuffer())).has('photo-print.png'));
@@ -265,7 +292,8 @@ test('photo borders match preview and production while full paper remains printa
         d.layers = [newLayer('shape', { x: 0, y: 0, width: w, height: h, shape: 'rect', fill: '#ff0000' })];
         for (const mode of ['preview', 'production'] as const) {
           const { data, info } = await sharp(await render(d, t, [], store, mode, false)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-          const pixel = (x: number, y: number) => [...data.subarray((Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4, (Math.round(y * 300 / 25.4) * info.width + Math.round(x * 300 / 25.4)) * 4 + 4)];
+          const outputPpi = mode === 'preview' ? Math.min(t.dpi, 300) : t.dpi;
+          const pixel = (x: number, y: number) => [...data.subarray((Math.round(y * outputPpi / 25.4) * info.width + Math.round(x * outputPpi / 25.4)) * 4, (Math.round(y * outputPpi / 25.4) * info.width + Math.round(x * outputPpi / 25.4)) * 4 + 4)];
           assert.deepEqual(pixel(1, 1), sizeId === 'small-photo' ? [255, 0, 0, 255] : [255, 255, 255, 255]);
           assert.deepEqual(pixel(w / 2, h / 2), [255, 0, 0, 255]);
         }
@@ -281,16 +309,17 @@ test('photo holder uses a full small-photo page and fixed portrait Instax margin
 });
 
 test('private cart uses immutable versions and original library assets remain transparent', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-cart-')), app = await createApp(root), server = app.listen(0, '127.0.0.1');
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-cart-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;
   let cookie = '';
-  const req = (route: string, method = 'GET', body?: unknown, session = cookie) => fetch(url + route, { method, headers: { Cookie: session, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const req = (route: string, method = 'GET', body?: unknown, session = cookie) => fetch(url + route, { method, headers: { Cookie: session, 'X-Studio-Token': 'test-studio-token', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   try {
     cookie = (await req('/session', 'POST')).headers.get('set-cookie')!.split(';')[0];
     const d = emptyDesign(); await req('/designs', 'POST', d);
     const art = await req(`/designs/${d.id}/library`, 'POST', { artworkId: 'star-glow' }); assert.equal(art.status, 201);
-    const a = await art.json(); const bytes = Buffer.from(await (await req(`/assets/${a.id}?original=1`)).arrayBuffer());
-    const raw = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); assert.equal(raw.info.width, 1600); assert.equal(raw.data[3], 0); assert.ok(raw.data.some((v, i) => i % 4 === 3 && v > 0));
+    const a = await art.json(); assert.equal((await req(`/assets/${a.id}?original=1`)).status, 403);
+    const bytes = Buffer.from(await (await req(`/assets/${a.id}`)).arrayBuffer());
+    const raw = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); assert.ok(raw.info.width <= 1000); assert.equal(raw.data[3], 0); assert.ok(raw.data.some((v, i) => i % 4 === 3 && v > 0));
     d.layers = [newLayer('image', { assetId: a.id, x: 10, y: 10, width: 50, height: 50 })];
     await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 });
     const v = await (await req(`/designs/${d.id}/confirm`, 'POST', { revision: 2 })).json();
