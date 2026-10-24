@@ -34,6 +34,23 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
 import { getFont } from './fonts';
 import { drawFrame } from './frame';
 export const FONT = 'Wanshi Sans';
+export function textFont(layer: DesignLayer, size = layer.fontSize || 10) {
+  const style = layer.fontStyle === 'italic' ? 'italic ' : '';
+  const weight = layer.fontWeight === 'bold' ? '700 ' : '';
+  return `${style}${weight}${size}px "${getFont(layer.fontId).family}", "${FONT}"`;
+}
+export function wrapTextLines(text: string, width: number, measure: (value: string) => number) {
+  const lines: string[] = [];
+  for (const paragraph of text.split('\n')) {
+    let line = '';
+    for (const char of Array.from(paragraph)) {
+      if (line && measure(line + char) > width) { lines.push(line); line = ''; }
+      line += char;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
 export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?: CanvasImageSource, mode: RenderMode = 'preview', renderScale = 1) {
   if (!l.visible || (mode === 'mask' && l.kind !== 'uv') || (mode === 'production' && l.kind === 'uv')) return;
   ctx.save();
@@ -70,17 +87,24 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
   }
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;
-    ctx.font = `${size}px "${getFont(l.fontId).family}", "${FONT}"`; ctx.textBaseline = 'top';
+    const lineHeight = size * (l.lineHeight ?? 1.3), letterSpacing = l.letterSpacing ?? 0;
+    ctx.font = textFont(l, size); ctx.textBaseline = 'top';
     ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
-    let y = 0;
-    for (const paragraph of (l.text || '').split('\n')) {
-      let line = '';
-      for (const char of Array.from(paragraph)) {
-        if (line && ctx.measureText(line + char).width > l.width) { ctx.fillText(line, 0, y); y += size * 1.3; line = ''; }
-        line += char;
+    const measure = (text: string) => ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * letterSpacing;
+    const drawLine = (text: string, y: number) => {
+      const lineWidth = measure(text);
+      let x = l.textAlign === 'center' ? (l.width - lineWidth) / 2 : l.textAlign === 'right' ? l.width - lineWidth : 0;
+      if (letterSpacing && text) {
+        for (const char of Array.from(text)) { ctx.fillText(char, x, y); x += ctx.measureText(char).width + letterSpacing; }
+      } else ctx.fillText(text, x, y);
+      if (l.textDecoration === 'underline' && text) {
+        const start = l.textAlign === 'center' ? (l.width - lineWidth) / 2 : l.textAlign === 'right' ? l.width - lineWidth : 0;
+        ctx.save(); ctx.strokeStyle = mode === 'mask' ? '#ffffff' : l.fill; ctx.lineWidth = Math.max(.18, size * .06);
+        ctx.beginPath(); ctx.moveTo(start, y + size * 1.08); ctx.lineTo(start + lineWidth, y + size * 1.08); ctx.stroke(); ctx.restore();
       }
-      ctx.fillText(line, 0, y); y += size * 1.3;
-    }
+    };
+    let y = 0;
+    for (const line of wrapTextLines(l.text || '', l.width, measure)) { drawLine(line, y); y += lineHeight; }
   } else if (l.kind !== 'image') {
     ctx.scale(l.width, l.height); ctx.beginPath();
     if (l.shape === 'circle') ctx.ellipse(0.5, 0.5, 0.5, 0.5, 0, 0, Math.PI * 2);

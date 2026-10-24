@@ -1,4 +1,5 @@
 import { scatterPetals } from '../shared/petals';
+import { resizeLayerDimension } from '../shared/transform';
 import { removeEmptyStrokes } from '../shared/eraser';
 import { PrintStackPicker } from './PrintStackPicker';
 import { fonts, getFont, type FontId } from '../shared/fonts';
@@ -14,6 +15,7 @@ import './styles.css';
 import './studio.css';
 import { ArtLibrary } from './ArtLibrary';
 import { artCatalog } from '../shared/artwork';
+import { textFont, wrapTextLines } from '../shared/draw';
 import { Cart, type CartItem } from './Cart';
 import { assetUrl, publicUrl, staticDemo } from './urls';
 
@@ -38,6 +40,23 @@ function normalizePhotoDesign(design: Design, template: Template, assets: Asset[
   return { ...next, layers: next.layers.map(layer => layer.kind === 'image' && layer.assetId && byId.has(layer.assetId) ? fitPhotoImageLayer(layer, byId.get(layer.assetId)!, next, template) : layer) };
 }
 function App() {
+  const shiftHeld = useRef(false);
+  useEffect(() => {
+    const update = (event: KeyboardEvent | PointerEvent) => { shiftHeld.current = event.shiftKey; };
+    const reset = () => { shiftHeld.current = false; };
+    window.addEventListener('keydown', update);
+    window.addEventListener('keyup', update);
+    window.addEventListener('pointerdown', update);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+    return () => {
+      window.removeEventListener('keydown', update);
+      window.removeEventListener('keyup', update);
+      window.removeEventListener('pointerdown', update);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', reset);
+    };
+  }, []);
   const [cart, setCart] = useState<CartItem[]>([]), [showCart, setShowCart] = useState(false);
   const confirmationCache = useRef<{ revision: number; designId: string; version: VersionInfo } | null>(null);
   const [paintMode, setPaintMode] = useState<'select' | 'pen' | 'stamp' | 'petals' | 'eraser'>('select'), [paintColor, setPaintColor] = useState('#b87987'), [paintSize, setPaintSize] = useState(2), [paintOpacity, setPaintOpacity] = useState(1), [stampAsset, setStampAsset] = useState<string>(), [stampRotation, setStampRotation] = useState(0);
@@ -124,7 +143,7 @@ function App() {
  if (next.sizeId === 'custom' && next.customSize) { const c = next.customSize; next = { ...next, customSize: { ...c, thicknessMm: Math.min(c.thicknessMm, c.widthMm, c.heightMm, 50) } }; } const old = designRef.current!; if (JSON.stringify(old) === JSON.stringify(next)) return; setHistory(h => ({ past: [...h.past.slice(-79), old], future: [] })); designRef.current = next; setDesign(next); setStatus('有變更 · 等待儲存'); }
   function patchLayer(patch: Partial<DesignLayer>, id = selected) { if (!id || !designRef.current) return; change({ ...designRef.current, layers: designRef.current.layers.map(l => l.id === id ? { ...l, ...patch } : l) }); }
   function undo(redo = false) { const stack = redo ? history.future : history.past; if (!stack.length) return; const next = stack[stack.length - 1], current = designRef.current!; setHistory(h => redo ? { past: [...h.past, current], future: h.future.slice(0, -1) } : { past: h.past.slice(0, -1), future: [...h.future, current] }); designRef.current = next; setDesign(next); setSelected(null); setSelectedIds([]); setStatus('有變更 · 等待儲存'); }
-  function fitNewLayer(layer: DesignLayer) { if (!template || !design) return layer; const { w, h } = dimensions(design, template); if (layer.x >= 0 && layer.y >= 0 && layer.x + layer.width <= w && layer.y + layer.height <= h) return layer; const ratio = Math.min(1, (w - 2 * template.safeMm) / layer.width, (h - 2 * template.safeMm) / layer.height); const width = layer.width * ratio, height = layer.height * ratio; return { ...layer, width, height, x: (w - width) / 2, y: (h - height) / 2, ...(layer.kind === 'text' ? { fontSize: Math.max(1, (layer.fontSize || 10) * ratio) } : {}) }; }
+  function fitNewLayer(layer: DesignLayer) { if (!template || !design) return layer; const { w, h } = dimensions(design, template); if (layer.x >= 0 && layer.y >= 0 && layer.x + layer.width <= w && layer.y + layer.height <= h) return layer; const ratio = Math.min(1, (w - 2 * template.safeMm) / layer.width, (h - 2 * template.safeMm) / layer.height); const width = layer.width * ratio, height = layer.height * ratio; return { ...layer, width, height, x: (w - width) / 2, y: (h - height) / 2, ...(layer.kind === 'text' ? { fontSize: Math.max(1, Math.min(200, (layer.fontSize || 10) * ratio)), letterSpacing: (layer.letterSpacing || 0) * ratio } : {}) }; }
   function add(layer: DesignLayer) { const asset = layer.assetId ? assets.find(item => item.id === layer.assetId && !item.libraryArtworkId) : undefined; layer = { ...(template?.presentation === 'photo-holder' && asset ? fitPhotoImageLayer(layer, asset, design!, template, true) : fitNewLayer(layer)), face }; change({ ...designRef.current!, layers: [...designRef.current!.layers, layer] }); setSelected(layer.id); }
   function remove() { if (selectedIds.length) { change({ ...design!, layers: design!.layers.filter(l => !selectedIds.includes(l.id) || l.locked || !l.visible) }); setSelectedIds([]); return; } if (!chosen || (chosen.locked && chosen.kind !== 'frame')) return; change({ ...design!, layers: design!.layers.filter(l => l.id !== chosen.id) }); setSelected(null); }
   function duplicate() { if (chosen) add({ ...chosen, id: crypto.randomUUID(), name: chosen.name + ' 副本', x: chosen.x + 5, y: chosen.y + 5, locked: false }); }
@@ -166,6 +185,7 @@ function App() {
   async function restore(id: string) { await run(async () => { const v = await api<{ design: Design }>(`/versions/${id}`); change(withPrintStack(v.design, v.design.printStack || (v.design.duplex ? 'cmyk-white-cmyk' : v.design.printView === 'acrylic' ? 'cmyk-white' : 'white-cmyk'))); setSelected(null); await save(designRef.current); }); }
   async function cutout() { if (!chosen?.assetId) return; await run(async () => { const result = await api<Asset>(`/assets/${chosen.assetId}/remove-background`, { method: 'POST' }); setAssets(a => [...a, result]); patchLayer({ assetId: result.id }); await save(designRef.current); }); }
   const mm = design && template ? dimensions(design, template) : undefined;
+  const offCanvasLayerIds = new Set(mm ? faceLayers.filter(layer => layer.visible && layer.kind !== 'frame' && (layer.x + layer.width <= 0 || layer.y + layer.height <= 0 || layer.x >= mm.w || layer.y >= mm.h)).map(layer => layer.id) : []);
   const selectedAsset = assets.find(a => a.id === chosen?.assetId);
   const photoAssetIds = new Set(assets.filter(asset => !asset.libraryArtworkId).map(asset => asset.id));
   const chosenIsPhoto = template?.presentation === 'photo-holder' && !!chosen?.assetId && photoAssetIds.has(chosen.assetId);
@@ -238,7 +258,7 @@ function App() {
       <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${(template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
-          {chosenIsPhoto && selectedAsset ? <PhotoImageControls layer={chosen} asset={selectedAsset} design={design} template={template} patch={patchLayer}/> : <><section className="image-transform-controls" aria-label="圖片自由變形"><div><b>自由變形</b><small>拖曳四邊可單獨拉寬或拉高；四角可同時改變長寬。</small></div><button type="button" disabled={!selectedAsset} onClick={restoreImageRatio}>恢復圖片比例</button></section><ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/></>}
+          {chosenIsPhoto && selectedAsset ? <PhotoImageControls layer={chosen} asset={selectedAsset} design={design} template={template} patch={patchLayer}/> : <><TransformControls layer={chosen} patch={patchLayer} disabled={busy || chosen.locked || !!cropBox} restore={selectedAsset ? restoreImageRatio : undefined}/><ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/></>}
           <ImageCornerControls layer={chosen} patch={patchLayer}/>
           <ImageAdjustments layer={chosen} patch={patchLayer}/>
           <button className="ai-button" disabled={!config?.backgroundRemoval} onClick={cutout}>✧ {config?.backgroundRemoval ? 'AI 一鍵去背' : 'AI 去背未啟用'}</button>
@@ -264,6 +284,7 @@ function App() {
         {template.presentation === 'photo-holder' && <div className="product-size-bar"><div className="holder-options-row" role="group" aria-label="照片規格">{[...(template.sizes || [])].reverse().map(size => <button key={size.id} disabled={busy} aria-pressed={design.sizeId === size.id} onClick={() => { change({ ...design, sizeId: size.id, orientation: 'portrait' }); setSelected(null); setTransient(null); }}><b>{size.id === 'instax-mini' ? '拍立得' : '相紙'}</b><small>{size.widthMm} × {size.heightMm} mm・直式</small></button>)}</div><small>單面照片・圖片預設滿版，只能左右取景與放大</small></div>}
         {template.sizes && template.presentation !== 'photo-holder' && <div className="product-size-bar"><label>{template.name}尺寸<select aria-label="商品尺寸" value={design.sizeId || template.sizes[0].id} disabled={busy} onChange={e => { change({ ...design, sizeId: e.target.value, customSize: e.target.value === 'custom' ? design.customSize || { widthMm: template.widthMm, heightMm: template.heightMm, thicknessMm: template.thicknessMm || 20 } : undefined }); setSelected(null); setTransient(null); }}>{template.sizes.filter(size => !size.retired).map(size => <option key={size.id} value={size.id}>{size.name.split(' · ')[0]} · {design.orientation === 'portrait' ? size.widthMm : size.heightMm} × {design.orientation === 'portrait' ? size.heightMm : size.widthMm}{size.thicknessMm ? ` × ${size.thicknessMm}` : ''} mm</option>)}{retiredSize && <option value={retiredSize.id}>其他尺寸（{design.orientation === 'portrait' ? retiredSize.widthMm : retiredSize.heightMm} × {design.orientation === 'portrait' ? retiredSize.heightMm : retiredSize.widthMm} mm・另外報價）</option>}{template.allowCustomSize && <option value="custom">其他尺寸（客人自行輸入・另外報價）</option>}</select></label>{design.sizeId === 'custom' && <small>每次 5 mm・長／高 20–250 mm、厚 5–{Math.min(50, mm!.w, mm!.h)} mm（不超過短邊）；輸入會就近對齊 5 mm・<strong>其他尺寸需另外報價</strong></small>}{retiredSize && <small>已保留既有排版尺寸；厚度未指定，請選「其他尺寸」填寫。</small>}<small>{template.presentation === 'acrylic-badge' ? '長 × 高（mm）' : '長 × 高 × 厚（mm）'}・依目前方向顯示</small></div>}<div className="canvas-heading">{marquee && <p>拖曳框選，拖動選取框可整批移動；Shift 可追加選取，Delete 刪除。鎖定及隱藏圖層略過。</p>}<span>YOUR DESIGN, YOUR EVERYDAY</span><h1>讓喜歡的畫面，成為日常。</h1><p>{mm!.w} × {mm!.h} mm <span>／</span> {template.name}</p></div>
 
+        {offCanvasLayerIds.size > 0 && <div className="off-canvas-warning" role="status"><span>有 {offCanvasLayerIds.size} 個圖層在目前商品畫布外；內容仍完整保留。</span><button disabled={busy} onClick={() => change({ ...design, layers: design.layers.map(layer => offCanvasLayerIds.has(layer.id) ? fitNewLayer(layer) : layer) })}>縮放並移回畫布</button></div>}
         <div className="dimension-workspace">
           <div className="dimension-horizontal"><span aria-hidden="true">↔</span>{design.sizeId === 'custom' && design.customSize ? <DimensionControl axis="長" label="長 (mm)" value={mm!.w} min={20} max={250} onChange={value => change({ ...design, customSize: { ...design.customSize!, [design.orientation === 'portrait' ? 'widthMm' : 'heightMm']: value } })}/> : <span>{template.presentation?.startsWith('acrylic-') ? '長' : '寬'} {mm!.w} mm</span>}</div>
           <div className="dimension-canvas"><EditorCanvas photoAssetIds={photoAssetIds} cropBox={cropBox} setCropBox={setCropBox} liveMany={setTransientMany} marquee={marquee} contained={contained} selectedIds={selectedIds} selectMany={setSelectedIds} replaceLayers={layers => change({ ...design, layers: design.layers.map(l => layers.find(v => v.id === l.id) || l) })} createBatch={layers => { if (design.layers.length + layers.length > 150) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...layers] }); }} paint={tab === 'brush' && paintMode !== 'select' ? { mode: paintMode, color: paintColor, size: paintSize, opacity: paintOpacity, assetId: stampAsset, rotation: stampRotation, flowerType, count: petalCount } : undefined} create={l => { if (design.layers.length >= 150) { setError('最多 150 個圖層，請先刪除不需要的筆畫。'); return; } change({ ...design, layers: [...design.layers, l] }); }} design={canvasDesign!} template={template} images={images} selected={selected} select={setSelected} commit={l => patchLayer(l, l.id)} live={setTransient} zoom={zoom} guides={guides} disabled={busy || confirmation}/></div>
@@ -275,12 +296,12 @@ function App() {
         {!faceLayers.length && <p className="canvas-empty">← 上傳一張圖片，開始你的設計</p>}
         <div className="canvas-footer"><div className="legend">{template.presentation === 'photo-holder' ? <span>灰線：相紙邊界・綠虛線：可印影像區・白邊不列印</span> : <><span><i className="trim"/>{template.presentation?.startsWith('acrylic-') ? '成品邊界' : '裁切線'}</span><span><i className="safe"/>{template.presentation?.startsWith('acrylic-') ? '列印安全線' : '安全區'}（內縮 {template.safeMm} mm）</span><span>{template.presentation?.startsWith('acrylic-') ? '無出血'  : `出血 ${template.bleedMm} mm`}</span></>}</div><div className="zoom"><button aria-label="縮小工作區" onClick={() => setZoom(z => Math.max(0.1, z / 1.2))}>−</button><button onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button><button aria-label="放大工作區" onClick={() => setZoom(z => Math.min(10, z * 1.2))}>＋</button><button onClick={() => setZoom(fitZoom())}>符合</button></div></div>
       </main>
-      <aside className="right-panel"><div className="panel-heading"><span>成品預覽</span><small className="live-tag">● 即時同步</small></div><ProductScene design={preview!} template={template} images={images}/><div className="specs"><span>{template.presentation === 'photo-holder' ? '相紙尺寸' : '成品尺寸'}<b>{mm!.w} × {mm!.h} mm</b></span><span>加工設定<b>{template.dpi} DPI</b></span></div>
+      <aside className={`right-panel ${chosen ? 'has-selection' : ''}`}><div className="panel-heading"><span>成品預覽</span><small className="live-tag">● 即時同步</small></div><ProductScene design={preview!} template={template} images={images}/><div className="specs"><span>{template.presentation === 'photo-holder' ? '相紙尺寸' : '成品尺寸'}<b>{mm!.w} × {mm!.h} mm</b></span><span>加工設定<b>{template.dpi} DPI</b></span></div>
         <div className="inspector"><div className="panel-heading"><span>{chosen ? '圖層設定' : '開始你的創作'}</span>{chosen && <small>{chosen.kind === 'uv' ? 'UV 效果' : chosen.kind === 'image' ? '圖片' : chosen.kind === 'text' ? '文字' : '裝飾'}</small>}</div>
           {chosen?.kind === 'frame' ? <><p className="muted">圖框自動貼合版面，隨尺寸與直橫式更新。角落裝飾保持比例，不需拖曳或縮放。</p><button disabled={busy} onClick={() => patchLayer({ visible: !chosen.visible })}>{chosen.visible ? '隱藏圖框' : '顯示圖框'}</button><button className="danger" disabled={busy} onClick={remove}>移除圖框</button></> : chosen ? <><label>圖層名稱<input value={chosen.name} disabled={busy || chosen.locked} onChange={e => patchLayer({ name: e.target.value })}/></label>{chosen.locked && <p className="muted">此圖層已鎖定。<button onClick={() => patchLayer({ locked: false })} disabled={busy}>解鎖</button></p>}<fieldset disabled={busy || chosen.locked}>
-            {chosen.kind === 'text' && <><label>文字字體<select aria-label="文字字體" value={chosen.fontId || 'sans'} onChange={e => patchLayer({ fontId: e.target.value as FontId })}>{fonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label><label>文字內容<textarea value={chosen.text || ''} onChange={e => patchLayer({ text: e.target.value })}/></label><Numeric label="字級 (mm)" value={chosen.fontSize || 10} min={1} max={200} onChange={fontSize => patchLayer({ fontSize })}/></>}
-            {chosenIsPhoto ? <p className="photo-position-note">照片已固定直式滿版。請在左側「調整圖片」使用左右取景與放大；也可直接在畫布上左右拖曳。</p> : <div className="input-grid">{(['x', 'y', 'width', 'height', 'rotation'] as const).map((key, i) => <Numeric key={key} label={['X (mm)', 'Y (mm)', '寬 (mm)', '高 (mm)', '旋轉 (°)'][i]} value={chosen[key]} min={key === 'width' || key === 'height' ? 0.1 : -1000} max={1000} onChange={v => patchLayer({ [key]: v })}/>)}</div>}
-            {chosen.kind !== 'image' && <label>顏色<input type="color" value={chosen.fill} onChange={e => patchLayer({ fill: e.target.value })}/></label>}
+            {chosen.kind === 'text' && <TextControls layer={chosen} patch={patchLayer}/>}
+            {chosenIsPhoto ? <p className="photo-position-note">照片已固定直式滿版。請在左側「調整圖片」使用左右取景與放大；也可直接在畫布上左右拖曳。</p> : <div className="input-grid">{(['x', 'y', 'width', 'height', 'rotation'] as const).map((key, i) => <Numeric key={key} label={['X (mm)', 'Y (mm)', '寬 (mm)', '高 (mm)', '旋轉 (°)'][i]} value={chosen[key]} min={key === 'width' || key === 'height' ? 0.1 : -1000} max={1000} onChange={v => patchLayer(chosen.kind === 'image' && (key === 'width' || key === 'height') ? resizeLayerDimension(chosen, key, v, shiftHeld.current) : { [key]: v })}/>)}</div>}
+            {chosen.kind !== 'image' && chosen.kind !== 'text' && <label>顏色<input type="color" value={chosen.fill} onChange={e => patchLayer({ fill: e.target.value })}/></label>}
             {(chosen.kind === 'shape' || chosen.kind === 'uv') && <label>形狀<select value={chosen.shape} onChange={e => patchLayer({ shape: e.target.value as DesignLayer['shape'] })}><option value="petal">花瓣</option><option value="star">星芒</option><option value="circle">圓形</option><option value="rect">方形</option></select></label>}
             <label>{chosen.kind === 'uv' ? '效果強度' : '不透明度'} {Math.round(chosen.opacity * 100)}%<input type="range" min="0" max="1" step="0.01" value={chosen.opacity} onChange={e => patchLayer({ opacity: +e.target.value })}/></label>
             {!chosenIsPhoto && <div className="row"><button onClick={() => patchLayer({ x: (mm!.w - chosen.width) / 2, rotation: 0 })}>水平置中</button><button onClick={() => patchLayer({ y: (mm!.h - chosen.height) / 2, rotation: 0 })}>垂直置中</button></div>}
@@ -292,6 +313,55 @@ function App() {
     {showLibrary && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="我的設計"><div className="panel-heading"><h2>我的設計</h2><button onClick={() => setShowLibrary(false)}>關閉</button></div><label>目前設計名稱<input aria-label="設計名稱" value={design.name} maxLength={160} disabled={busy} onChange={e => change({ ...design, name: e.target.value || '未命名設計' })}/></label><button className="primary" disabled={busy} onClick={newDesign}>＋ 建立新設計</button>{savedList.map(d => <button className="saved-design" key={d.id} disabled={busy} onClick={() => openDesign(d.id)}><b>{d.name}</b><small>{new Date(d.updatedAt).toLocaleString('zh-TW')}</small></button>)}</section></div>}
     {confirmation && <div className="modal-backdrop"><section className="modal confirm-modal" role="dialog" aria-modal="true" aria-label="確認設計"><h2>讓設計，準備成形。</h2><p>{template.presentation === 'photo-holder' ? '確認後保存不可覆寫的選配與圖稿版本，提供原圖、完整 JSON、選配清單與預覽。加購列印另附相紙列印檔。' : '確認後會保存不可覆寫的版本，並提供包含原圖、完整 JSON、排版圖與 UV 遮罩（若使用）的 ZIP。'}</p>{template.presentation === 'photo-holder' ? <p>照片立／掛牌 · {design.photoHolder?.photoService === 'print' ? '加購照片列印' : '自備照片，不列印'}<br/>{design.photoHolder?.base ? '加購桌面底座' : '不含底座'} · {design.photoHolder?.nfc ? '背面加裝 NFC' : '無 NFC'}<br/>相紙 {mm!.w} × {mm!.h} mm；外框尺寸待確認。</p> : <p>印刷堆疊：{stackLabel(design)} · 同一份圖稿{template.thicknessMm && <> · 厚 {template.thicknessMm} mm</>}{design.sizeId === 'custom' && <><br/>其他尺寸：需另外報價，設計確認不代表報價已確認。</>}</p>}<div className="confirmation-preview"><Preview design={design} template={template} images={images}/></div>{template.presentation === 'photo-holder' ? <p className="muted">以下為相紙圖稿。自備照片不輸出列印檔；NFC 感應內容另行設定。</p> : <p className="muted">成品 {mm!.w} × {mm!.h} mm · 出血 {template.bleedMm} mm · {template.dpi} DPI<br/>安全區每邊內縮 {template.safeMm} mm；請檢查文字與圖片清晰度。安全線不會印出，也不會自動裁切圖稿。UV 預覽僅為效果示意。</p>}<div className="row"><button disabled={busy} onClick={() => setConfirmation(false)}>繼續編輯</button><button className="primary" disabled={busy || failed.length > 0 || design.layers.some(l => l.visible && l.assetId && !images.has(l.assetId))} onClick={() => confirm(true)}>{busy ? '正在加入…' : '確認並加入購物車'}</button></div></section></div>}
   </div>;
+}
+function TextControls({ layer, patch }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void }) {
+  const size = layer.fontSize || 10, lineHeight = layer.lineHeight ?? 1.3;
+  const measurementContext = document.createElement('canvas').getContext('2d');
+  const estimatedHeight = (fontSize: number) => {
+    if (!layer.text || !measurementContext) return 0;
+    measurementContext.font = textFont(layer, fontSize);
+    const letterSpacing = layer.letterSpacing || 0;
+    const measure = (value: string) => measurementContext.measureText(value).width + Math.max(0, Array.from(value).length - 1) * letterSpacing;
+    const lines = wrapTextLines(layer.text, layer.width, measure).length;
+    return Math.max(0, lines - 1) * fontSize * lineHeight + fontSize * Math.max(lineHeight, 1.12);
+  };
+  const mayClip = estimatedHeight(size) > layer.height + .1;
+  let fittedSize = size;
+  if (mayClip) {
+    let low = 1, high = size;
+    if (estimatedHeight(low) <= layer.height + .1) for (let step = 0; step < 12; step++) {
+      const middle = (low + high) / 2;
+      if (estimatedHeight(middle) <= layer.height + .1) low = middle; else high = middle;
+    }
+    fittedSize = Math.floor(low * 10) / 10;
+  }
+  const displaySize = Math.round(size * 10) / 10;
+  return <section className="text-style-controls" aria-label="文字樣式">
+    <label>文字字體<select aria-label="文字字體" value={layer.fontId || 'sans'} onChange={e => patch({ fontId: e.target.value as FontId })}>{fonts.map(font => <option key={font.id} value={font.id}>{font.name}</option>)}</select></label>
+    <label>文字內容<textarea value={layer.text || ''} onChange={e => patch({ text: e.target.value })}/></label>
+    <div className="text-color-size">
+      <label>文字顏色<input aria-label="文字顏色" type="color" value={layer.fill} onChange={e => patch({ fill: e.target.value })}/></label>
+      <Numeric label="字級 (mm)" value={size} min={1} max={200} step={.5} onChange={fontSize => patch({ fontSize })}/>
+    </div>
+    <div className="text-size-slider"><input aria-label="字級滑桿" type="range" min="1" max="60" step="0.5" value={Math.min(60, size)} onChange={e => patch({ fontSize: +e.target.value })}/><output>{displaySize} mm · 約 {Math.round(size * 2.835)} pt</output></div>
+    <div className="text-size-presets" role="group" aria-label="常用字級">{[3, 5, 8, 12, 20].map(value => <button type="button" key={value} aria-pressed={Math.abs(size - value) < .05} onClick={() => patch({ fontSize: value })}>{value} mm</button>)}</div>
+    <div className="text-format-row">
+      <div className="text-toggle-group" role="group" aria-label="字體樣式">
+        <button type="button" aria-label="粗體" aria-pressed={layer.fontWeight === 'bold'} onClick={() => patch({ fontWeight: layer.fontWeight === 'bold' ? 'normal' : 'bold' })}><b>B</b></button>
+        <button type="button" aria-label="斜體" aria-pressed={layer.fontStyle === 'italic'} onClick={() => patch({ fontStyle: layer.fontStyle === 'italic' ? 'normal' : 'italic' })}><i>I</i></button>
+        <button type="button" aria-label="底線" aria-pressed={layer.textDecoration === 'underline'} onClick={() => patch({ textDecoration: layer.textDecoration === 'underline' ? 'none' : 'underline' })}><u>U</u></button>
+      </div>
+      <div className="text-toggle-group" role="group" aria-label="文字對齊">
+        {([['left', '靠左對齊', '≡'], ['center', '置中對齊', '≣'], ['right', '靠右對齊', '≡']] as const).map(([value, label, symbol]) => <button type="button" key={value} className={`align-${value}`} aria-label={label} aria-pressed={(layer.textAlign || 'left') === value} onClick={() => patch({ textAlign: value })}>{symbol}</button>)}
+      </div>
+    </div>
+    <div className="text-spacing-controls">
+      <Numeric label="字距 (mm)" value={layer.letterSpacing ?? 0} min={-2} max={10} step={.1} onChange={letterSpacing => patch({ letterSpacing })}/>
+      <label>行距 <output>{lineHeight.toFixed(1)}×</output><input aria-label="文字行距" type="range" min="0.8" max="3" step="0.1" value={lineHeight} onChange={e => patch({ lineHeight: +e.target.value })}/></label>
+    </div>
+    {mayClip && <div className="text-overflow-warning" role="status"><span>目前字級、字距或行距可能超出文字框，成品會裁切。</span>{fittedSize < size ? <button type="button" onClick={() => patch({ fontSize: fittedSize })}>自動縮小至 {fittedSize} mm</button> : <small>請增加文字框高度或減少文字內容。</small>}</div>}
+    <small className="text-size-note">字級以成品毫米計算；拖曳文字角落會等比例調整文字與文字框。</small>
+  </section>;
 }
 function PhotoImageControls({ layer, asset, design, template, patch }: { layer: DesignLayer; asset: Asset; design: Design; template: Template; patch: (change: Partial<DesignLayer>) => void }) {
   const area = photoImageArea(design, template)!;
@@ -366,6 +436,14 @@ function DimensionControl({ axis, vertical = false, ...props }: { axis: string; 
     <Numeric {...props} step={5} snapOnBlur/>
     <input className="dimension-range" type="range" aria-label={`${axis}滑桿`} aria-orientation={vertical ? 'vertical' : 'horizontal'} aria-valuetext={`${props.value} mm`} min={props.min} max={props.max} step={5} value={props.value} onChange={e => props.onChange(Number(e.target.value))}/>
   </div>;
+}
+function TransformControls({ layer, patch, disabled = false, restore }: { layer: DesignLayer; patch: (patch: Partial<DesignLayer>) => void; disabled?: boolean; restore?: () => void }) {
+  const locked = layer.aspectRatioLocked !== false;
+  return <section className="image-transform-controls" aria-label={layer.kind === 'image' ? '圖片自由變形' : '圖層自由變形'}>
+    <div><b>{locked ? '等比例縮放' : '自由變形'}</b><small>{locked ? '拖曳四角或輸入寬高維持比例；按住 Shift 可暫時自由變形。' : '比例已解鎖；拖曳四邊或四角、輸入寬高可自由變形。'}</small></div>
+    <button type="button" aria-label="鎖定長寬比例" aria-pressed={locked} disabled={disabled} onClick={() => patch({ aspectRatioLocked: !locked })}>{locked ? '解鎖比例' : '鎖定比例'}</button>
+    {restore && <button className="restore-image-ratio" type="button" disabled={disabled} onClick={restore}>恢復圖片比例</button>}
+  </section>;
 }
 function Numeric({ label, value, min, max, onChange, step = 0.1, snapOnBlur = false }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void; step?: number; snapOnBlur?: boolean }) {
   const [text, setText] = useState(value.toFixed(2).replace(/\.?0+$/, ''));

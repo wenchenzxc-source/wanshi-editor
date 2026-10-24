@@ -15,6 +15,7 @@ export const layerSchema = z.object({
   frameId: z.enum(['halloween-frame', 'starlight-frame', 'petal-frame']).optional(),
   x: z.number().min(-1000).max(1000), y: z.number().min(-1000).max(1000),
   width: z.number().min(0.1).max(1000), height: z.number().min(0.1).max(1000),
+  aspectRatioLocked: z.boolean().optional(),
   rotation: z.number().min(-36000).max(36000), opacity: z.number().min(0).max(1),
   brightness: z.number().min(0.25).max(2).optional(),
   contrast: z.number().min(0.25).max(2).optional(),
@@ -30,6 +31,12 @@ export const layerSchema = z.object({
   face: z.enum(['front', 'back']).optional(),
   fontSize: z.number().min(1).max(200).optional(),
   fontId: z.enum(fontIds).optional(),
+  fontWeight: z.enum(['normal', 'bold']).optional(),
+  fontStyle: z.enum(['normal', 'italic']).optional(),
+  textDecoration: z.enum(['none', 'underline']).optional(),
+  textAlign: z.enum(['left', 'center', 'right']).optional(),
+  letterSpacing: z.number().min(-20).max(100).optional(),
+  lineHeight: z.number().min(0.8).max(3).optional(),
   shape: z.enum(['petal', 'star', 'circle', 'rect']).optional(),
 }).superRefine((l, ctx) => {
   if (l.kind === 'stroke' && (!l.points || l.points.length % 2 || !l.brushRatio)) ctx.addIssue({ code: 'custom', message: '筆畫資料不完整' });
@@ -116,7 +123,7 @@ export function emptyDesign(template = templates[0]): Design {
   return { schemaVersion: 1, id: crypto.randomUUID(), name: `我的 ${template.name}`, templateId: template.id, ...(template.sizes?.length ? { sizeId: template.sizes[0].id } : {}), orientation: 'portrait', ...(template.presentation === 'photo-holder' ? { photoHolder: { base: false, nfc: false, photoService: 'own' as const, paperLayout: 'full' as const } } : {}), material: template.allowedMaterials?.[0] || 'white', printStack: 'white-cmyk', duplex: false, activeFace: 'front', printView: 'direct', background: '#faf6ef', backgroundOpacity: 1, layers: [], wooCommerceProductId: null, orderItemId: null };
 }
 export function newLayer(kind: DesignLayer['kind'], patch: Partial<DesignLayer> = {}): DesignLayer {
-  return { id: crypto.randomUUID(), name: kind === 'text' ? '文字' : kind === 'uv' ? 'UV 微浮雕' : '裝飾', kind, x: 30, y: 40, width: 50, height: 50, rotation: 0, opacity: 1, visible: true, locked: false, fill: '#b89571', shape: 'petal', ...patch };
+  return { id: crypto.randomUUID(), name: kind === 'text' ? '文字' : kind === 'uv' ? 'UV 微浮雕' : '裝飾', kind, x: 30, y: 40, width: 50, height: 50, rotation: 0, opacity: 1, visible: true, locked: false, fill: '#b89571', shape: 'petal', ...(kind === 'text' ? { fontWeight: 'normal' as const, fontStyle: 'normal' as const, textDecoration: 'none' as const, textAlign: 'left' as const, letterSpacing: 0, lineHeight: 1.3 } : {}), ...patch };
 }
 
 

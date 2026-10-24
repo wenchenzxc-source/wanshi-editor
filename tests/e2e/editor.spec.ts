@@ -6,7 +6,7 @@ async function upload(page: Page) {
   const png = await sharp({ create: { width: 640, height: 480, channels: 4, background: '#cb674d' } }).png().toBuffer();
   const webp = await sharp({ create: { width: 300, height: 300, channels: 4, background: '#3a857a' } }).webp().toBuffer();
   await page.getByTestId('file-upload').setInputFiles([{ name: '暖色照片.png', mimeType: 'image/png', buffer: png }, { name: '青色照片.webp', mimeType: 'image/webp', buffer: webp }]);
-  await expect(page.getByText('所有變更已儲存')).toBeVisible();
+  await expect(page.locator('.save-state')).toHaveText('所有變更已儲存');
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
 }
 test('real canvas transforms, live preview, restore, layers and immutable package', async ({ page }) => {
@@ -31,7 +31,7 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
   await page.mouse.move(centerX, top - 26); await page.mouse.down(); await page.mouse.move(centerX + 55, top + 8, { steps: 8 }); await page.mouse.up();
   await expect.poll(async () => Math.abs((await draft(page)).design.layers[1].rotation)).toBeGreaterThan(5);
   const saved = (await draft(page)).design;
-  await page.reload(); await expect(page.getByText('所有變更已儲存')).toBeVisible(); expect((await draft(page)).design).toEqual(saved);
+  await page.reload(); await expect(page.locator('.save-state')).toHaveText('所有變更已儲存'); expect((await draft(page)).design).toEqual(saved);
   
   await page.getByRole('button', { name: '鎖定 青色照片.webp', exact: true }).click(); await expect.poll(async () => (await draft(page)).design.layers[1].locked).toBe(true);
   await page.getByRole('button', { name: '解鎖 青色照片.webp', exact: true }).click();
@@ -52,15 +52,17 @@ test('real canvas transforms, live preview, restore, layers and immutable packag
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.getByText('基本形狀與 UV 效果', { exact: true }).click(); await page.getByRole('button', { name: /加入 UV 花瓣效果/ }).click();
   await page.getByRole('button', { name: '文字', exact: true }).click(); await page.getByRole('button', { name: '加入標題', exact: true }).click();
   await page.getByLabel('文字內容').fill('春日紀念\n屬於你的美好');
-  await page.getByRole('button', { name: /確認設計與加入購物車/ }).click(); await page.getByRole('button', { name: '僅儲存確認版本' }).click();
-  await expect(page.getByRole('link', { name: '下載完整製作包 ↓' })).toBeVisible();
+  await page.getByRole('button', { name: /確認設計與加入購物車/ }).click(); await page.getByRole('button', { name: '確認並加入購物車', exact: true }).click();
+  const cart = page.getByRole('dialog', { name: '購物車', exact: true });
+  await expect(cart.getByRole('link', { name: '下載製作包', exact: true })).toBeVisible();
+  await cart.getByRole('button', { name: '繼續設計', exact: true }).click();
   const version = (await draft(page)).versions[0];
   const snapshot = await (await page.request.get(`/api/versions/${version.id}`)).json();
-  await page.getByRole('button', { name: '底材', exact: true }).click(); await page.getByRole('button', { name: '金', exact: true }).click();
+  await page.locator('.canvas-material summary').click(); await page.getByRole('button', { name: '金', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.material).toBe('gold');
   expect(await (await page.request.get(`/api/versions/${version.id}`)).json()).toEqual(snapshot);
-  await page.getByRole('button', { name: '版本', exact: true }).click();
-  const downloadPromise = page.waitForEvent('download'); await page.getByRole('link', { name: '下載完整製作包 ↓' }).click(); const download = await downloadPromise; expect(download.suggestedFilename()).toMatch(/\.zip$/); expect(await download.failure()).toBeNull();
+  await page.getByRole('button', { name: '購物車 1', exact: true }).click();
+  const downloadPromise = page.waitForEvent('download'); await cart.getByRole('link', { name: '下載製作包', exact: true }).click(); const download = await downloadPromise; expect(download.suggestedFilename()).toMatch(/\.zip$/); expect(await download.failure()).toBeNull();
   await page.screenshot({ path: 'test-results/desktop.png', fullPage: true }); expect(errors).toEqual([]);
 });
 test('mobile touch moves a layer and restores it after reload', async ({ browser }) => {
@@ -75,7 +77,7 @@ test('mobile touch moves a layer and restores it after reload', async ({ browser
   for (let i = 1; i <= 8; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 4, y: y + i * 2 }] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect.poll(async () => (await draft(page)).design.layers[1].x).not.toBe(before);
-  const saved = (await draft(page)).design; await page.reload(); await expect(page.getByText('所有變更已儲存')).toBeVisible(); expect((await draft(page)).design).toEqual(saved);
+  const saved = (await draft(page)).design; await page.reload(); await expect(page.locator('.save-state')).toHaveText('所有變更已儲存'); expect((await draft(page)).design).toEqual(saved);
   await page.locator('.floating-layers').scrollIntoViewIfNeeded();
   const dock = await page.locator('.floating-layers').boundingBox(), canvas = await page.getByTestId('editor-canvas').boundingBox();
   expect(dock!.y).toBeGreaterThanOrEqual(canvas!.y + canvas!.height);
@@ -119,7 +121,13 @@ test('photo preview switches physical frames with orientation and preserves the 
     await page.getByRole('button', { name: '切換為直式' }).click();
     await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /photo-v1.webp$/);
     await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
-    expect(await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL())).toBe(original);
+    const restored = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL());
+    const [beforePixels, afterPixels] = await Promise.all([original, restored].map(url => sharp(Buffer.from(url.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer({ resolveWithObject: true })));
+    expect(afterPixels.info).toMatchObject({ width: beforePixels.info.width, height: beforePixels.info.height, channels: beforePixels.info.channels });
+    // Canvas resizing can round edge pixels differently; preserve the artwork within a strict pixel tolerance.
+    let difference = 0;
+    for (let i = 0; i < beforePixels.data.length; i++) difference += Math.abs(beforePixels.data[i] - afterPixels.data[i]);
+    expect(difference / beforePixels.data.length).toBeLessThan(0.1);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '切換為橫式' }).click();
@@ -131,7 +139,7 @@ test('photo preview switches physical frames with orientation and preserves the 
 test('ink stack uses one artwork and restricts double-sided materials', async ({ page }) => {
   await page.goto('/'); await upload(page);
   const original = (await draft(page)).design.layers;
-  await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.locator('.canvas-material summary').click();
   await page.getByRole('button', { name: '透明壓克力', exact: true }).click();
   for (const stack of ['cmyk-white', 'white-cmyk', 'cmyk-white-cmyk']) {
     await page.getByRole('button', { name: ({ 'cmyk-white': 'CMYK → 白', 'white-cmyk': '白 → CMYK', 'cmyk-white-cmyk': 'CMYK → 白 → CMYK' } as Record<string,string>)[stack], exact: true }).click();
@@ -140,8 +148,8 @@ test('ink stack uses one artwork and restricts double-sided materials', async ({
     await expect(page.getByRole('group', { name: '編輯面' })).toHaveCount(0);
     await expect(page.locator('.floating-layers .layer-row')).toHaveCount(2);
   }
-  await page.reload(); await expect(page.getByText('所有變更已儲存')).toBeVisible();
-  await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.reload(); await expect(page.locator('.save-state')).toHaveText('所有變更已儲存');
+  await page.locator('.canvas-material summary').click();
   await expect(page.getByRole('button', { name: 'CMYK → 白 → CMYK', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: '金', exact: true }).click();
   await expect(page.getByRole('button', { name: '白 → CMYK', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -161,7 +169,7 @@ test('bundled font selection changes live text and survives reload', async ({ pa
     pixels.add(await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL()));
   }
   expect(pixels.size).toBe(5);
-  await page.reload(); await expect(page.getByText('所有變更已儲存')).toBeVisible();
+  await page.reload(); await expect(page.locator('.save-state')).toHaveText('所有變更已儲存');
   await page.locator('.layer-select').filter({ hasText: '標題' }).click();
   await expect(page.getByLabel('文字字體', { exact: true })).toHaveValue('wenkai-bold');
   await page.getByRole('button', { name: '文字', exact: true }).click();
@@ -172,7 +180,7 @@ test('bundled font selection changes live text and survives reload', async ({ pa
 
 
 test('print-order illustration explains hover and mobile help without changing selection', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.goto('/'); await page.locator('.canvas-material summary').click();
   const choice = page.getByRole('button', { name: 'CMYK → 白', exact: true });
   await choice.hover();
   await expect(page.locator('#stack-effect-guide')).toContainText('從底材側觀看');
@@ -186,7 +194,7 @@ test('print-order illustration explains hover and mobile help without changing s
   await expect(choice).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'CMYK → 白 → CMYK', exact: true })).toBeDisabled();
   await page.locator('#stack-effect-guide').scrollIntoViewIfNeeded();
-  await expect(page.locator('.material-panel')).toHaveCSS('max-height', 'none');
+  await expect(page.locator('.canvas-material')).toHaveCSS('max-height', 'none');
   await page.locator('#stack-effect-guide').screenshot({ path: 'test-results/print-order-guide-mobile.png' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -195,7 +203,7 @@ test('print-order illustration explains hover and mobile help without changing s
 test('acrylic block product and size selection stay synchronized', async ({ page }) => {
   await page.goto('/'); await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   await expect(page.getByLabel('商品尺寸')).toHaveValue('mini-friend');
-  await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.locator('.canvas-material summary').click();
   await expect(page.locator('.material-grid button')).toHaveCount(1);
   await expect(page.getByRole('button', { name: '透明壓克力', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('商品尺寸').selectOption('friend');
@@ -391,7 +399,7 @@ test('thickness follows the shorter custom edge and remains valid after orientat
 test('top product choices switch to editable badge sizes and preserve the draft', async ({ page }) => {
   await page.goto('/');
   const nav = page.getByRole('navigation', { name: '商品種類' });
-  await expect(nav.getByRole('button')).toHaveCount(3);
+  await expect(nav.getByRole('button')).toHaveCount(4);
   await expect(page.getByLabel('商品模板')).toHaveCount(0);
   const badge = nav.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true });
   await badge.click(); await expect(badge).toHaveAttribute('aria-pressed', 'true');
@@ -495,7 +503,7 @@ test('badge hardware changes visually in both scenes and expanded preview', asyn
 test('round-hole position moves the attachment without drifting off the scene', async ({ page }) => {
   await page.goto('/'); await page.getByRole('button', { name: '壓克力識別牌 名片與平牌・三種尺寸', exact: true }).click();
   await page.getByRole('button', { name: /原款掛扣/ }).click();
-  await page.getByRole('button', { name: '底材', exact: true }).click();
+  await page.locator('.canvas-material summary').click();
   await page.getByRole('button', { name: '透明壓克力', exact: true }).click();
   const positions = page.getByRole('group', { name: '圓孔位置' });
   const leftOffsets = [];
@@ -533,7 +541,7 @@ test('photo holder paper sizes, base, NFC and photo service persist and preview 
   await options.getByLabel('背面加裝 NFC').uncheck();
   await expect(scene).toHaveAttribute('data-nfc', 'false');
   await expect(scene).toHaveAttribute('data-face', 'front');
-  await expect(page.getByText('固定直式', { exact: true })).toBeVisible();
+  await expect(page.locator('.fixed-orientation')).toContainText('固定直式');
   await expect(page.getByRole('button', { name: '切換為橫式', exact: true })).toHaveCount(0);
   await expect(page.getByLabel('照片立掛牌預覽')).toContainText('相紙 54 × 86 mm');
   await page.screenshot({ path: 'test-results/photo-holder-desktop.png', fullPage: true });
@@ -565,6 +573,7 @@ test('redesigned studio adds categorized artwork and keeps confirmed items in ca
   await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '萬聖節', exact: true }).click();
   await page.getByRole('button', { name: '角落蜘蛛網', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
+  await page.getByRole('button', { name: '素材', exact: true }).click();
   await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '光影星芒', exact: true }).click();
   await page.getByRole('button', { name: '暖光星芒', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
@@ -590,6 +599,7 @@ test('fitted frames follow the printable page while natural flowers remain edita
   await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '花瓣', exact: true }).click();
   await page.getByRole('button', { name: '淡櫻花枝', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
+  await page.getByRole('button', { name: '素材', exact: true }).click();
   await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '圖框', exact: true }).click();
   await page.getByRole('button', { name: /蛛網相框/ }).click();
   await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.height).toBe(200);
