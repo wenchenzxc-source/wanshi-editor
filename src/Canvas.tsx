@@ -29,13 +29,12 @@ type Props = { photoAssetIds?: Set<string>; cropBox?: CropBox | null; setCropBox
 type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
 type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
 type PinchZoom={id:string;startDistance:number;startLayer:DesignLayer;anchor:SelectionPoint;pending?:DesignLayer};
-type WheelZoom={id:string;layer:DesignLayer;timer:ReturnType<typeof setTimeout>};
 export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox, photoAssetIds }: Props) {
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
-  const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null), pinchZoom = useRef<PinchZoom | null>(null), wheelZoom = useRef<WheelZoom | null>(null);
+  const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null), pinchZoom = useRef<PinchZoom | null>(null), shrinkFeedbackAt = useRef(new Map<string, number>());
   function stroke(points: number[]) {
     const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1), r = paint!.size / 2;
     const x = Math.min(...xs) - r, y = Math.min(...ys) - r, width = Math.max(...xs) - x + r, height = Math.max(...ys) - y + r;
@@ -111,17 +110,14 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   function showImageZoom(layer: DesignLayer) {
     const node = nodes.current.get(layer.id); node?.setAttrs({ x: layer.x, y: layer.y, width: layer.width, height: layer.height, rotation: layer.rotation }); node?.getLayer()?.batchDraw(); live(layer);
   }
-  function zoomImageWithWheel(layer: DesignLayer, e: Konva.KonvaEventObject<WheelEvent>) {
-    if (disabled || paint || cropBox || layer.kind !== 'image' || layer.locked) return;
-    e.evt.preventDefault(); e.cancelBubble = true; selectMany([]); select(layer.id);
-    const previous = wheelZoom.current;
-    if (previous && previous.id !== layer.id) { clearTimeout(previous.timer); commit(previous.layer); wheelZoom.current = null; }
-    const base = wheelZoom.current?.id === layer.id ? wheelZoom.current.layer : layer;
-    const factor = Math.max(.85, Math.min(1.18, Math.exp(-e.evt.deltaY * .0015)));
-    const next = constrainPhoto(base, scaleLayerAtPoint(base, factor, pointer(e.target.getStage()!)));
-    if (wheelZoom.current) clearTimeout(wheelZoom.current.timer);
-    const timer = setTimeout(() => { const pending = wheelZoom.current; if (!pending || pending.id !== layer.id) return; commit(pending.layer); live(null); wheelZoom.current = null; }, 140);
-    wheelZoom.current = { id: layer.id, layer: next, timer }; showImageZoom(next);
+  function showMinimumShrinkFeedback(layer: DesignLayer) {
+    const now = performance.now(), previous = shrinkFeedbackAt.current.get(layer.id) || 0;
+    if (now - previous < 420) return;
+    shrinkFeedbackAt.current.set(layer.id, now);
+    const node = nodes.current.get(layer.id); if (!node) return;
+    const insetX = layer.width * .018, insetY = layer.height * .018;
+    node.setAttrs({ x: layer.x + insetX, y: layer.y + insetY, width: layer.width - insetX * 2, height: layer.height - insetY * 2 });
+    node.to({ x: layer.x, y: layer.y, width: layer.width, height: layer.height, duration: .2, easing: Konva.Easings.BackEaseOut });
   }
   function touchPosition(stage: Konva.Stage, touch: Touch) { const rect = stage.container().getBoundingClientRect(); return { stage: { x: touch.clientX - rect.left, y: touch.clientY - rect.top }, design: { x: (touch.clientX - rect.left) / scale - pad - b, y: (touch.clientY - rect.top) / scale - pad - b } }; }
   function beginPinch(e: Konva.KonvaEventObject<TouchEvent>) {
@@ -139,13 +135,15 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     const gesture = pinchZoom.current; if (!gesture || e.evt.touches.length < 2) return false;
     const distance = Math.hypot(e.evt.touches[1].clientX - e.evt.touches[0].clientX, e.evt.touches[1].clientY - e.evt.touches[0].clientY);
     const next = constrainPhoto(gesture.startLayer, scaleLayerAtPoint(gesture.startLayer, distance / Math.max(1, gesture.startDistance), gesture.anchor));
-    gesture.pending = next; nodes.current.get(gesture.id)?.stopDrag(); showImageZoom(next); e.evt.preventDefault(); e.cancelBubble = true; return true;
+    const previous = gesture.pending || gesture.startLayer;
+    const blocked = distance < gesture.startDistance && Math.abs(next.width - previous.width) < .01 && Math.abs(next.height - previous.height) < .01;
+    gesture.pending = next; nodes.current.get(gesture.id)?.stopDrag(); if (blocked) showMinimumShrinkFeedback(next); else showImageZoom(next); e.evt.preventDefault(); e.cancelBubble = true; return true;
   }
   function finishPinch(e: Konva.KonvaEventObject<TouchEvent>) {
     const gesture = pinchZoom.current; if (!gesture) return false;
     if (gesture.pending) commit(gesture.pending); live(null); pinchZoom.current = null; e.evt.preventDefault(); e.cancelBubble = true; return true;
   }
-  useEffect(() => () => { if (wheelZoom.current) clearTimeout(wheelZoom.current.timer); wheelZoom.current = null; pinchZoom.current = null; }, [design.templateId, design.sizeId, design.orientation]);
+  useEffect(() => () => { pinchZoom.current = null; shrinkFeedbackAt.current.clear(); }, [design.templateId, design.sizeId, design.orientation]);
   function beginMarquee(e:Konva.KonvaEventObject<MouseEvent|TouchEvent>){
     if(disabled||paint||cropBox||e.target!==e.target.getStage())return;
     const start=pointer(e.target.getStage()!);const next={start,end:start,add:'shiftKey' in e.evt&&e.evt.shiftKey};
@@ -187,7 +185,6 @@ export function EditorCanvas({ design, template, images, selected, select, commi
             {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
-              onWheel={l.kind === 'image' ? e => zoomImageWithWheel(l, e) : undefined}
               onClick={e => { if(e.evt.shiftKey && !isPhoto(l))selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
                 if(isPhoto(l)){selectMany([]);select(l.id);}
                 else if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}
