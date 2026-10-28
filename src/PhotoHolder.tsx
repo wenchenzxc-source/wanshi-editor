@@ -8,7 +8,7 @@ export function PhotoHolderOptions({ design, change, disabled }: { design: Desig
   const options = design.photoHolder || defaultPhotoHolder;
   const patch = (p: Partial<typeof options>) => change({ ...design, photoHolder: { ...options, ...p } });
   return <section className="photo-holder-options" aria-label="照片立掛牌選配"><h3>照片立／掛牌</h3><p>固定直式・同款可立可掛，底座另選加購。</p>
-    {design.sizeId === 'instax-mini' ? <p>拍立得固定白邊・影像區 46 × 62 mm<br/>照片預設鋪滿影像區，只需左右取景與放大。</p> : <p>小相紙 50 × 76 mm 滿版<br/>照片預設鋪滿整張相紙，只需左右取景與放大。</p>}
+    {design.sizeId === 'instax-mini' ? <p>拍立得固定白邊・影像區 46 × 62 mm<br/>照片預設鋪滿影像區，放大後可上下左右取景。</p> : <p>小相紙 50 × 76 mm 滿版<br/>照片預設鋪滿整張相紙，放大後可上下左右取景。</p>}
     <fieldset disabled={disabled}><legend>照片服務</legend><div className="holder-options-row">
       <button aria-pressed={options.photoService === 'own'} onClick={() => patch({ photoService: 'own' })}>自備照片</button>
       <button aria-pressed={options.photoService === 'print'} onClick={() => patch({ photoService: 'print' })}>加購照片列印</button>

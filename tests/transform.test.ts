@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layerSchema, newLayer } from '../shared/model';
-import { remapImagesToCanvas, resizeLayerDimension, scaleLayerAtPoint, validLayerSize } from '../shared/transform';
+import { clampCoverPosition, remapImagesToCanvas, resizeLayerDimension, scaleLayerAtPoint, validLayerSize } from '../shared/transform';
 
 test('old and new layers resize proportionally unless unlocked or Shift is held', () => {
   const layer = layerSchema.parse(newLayer('shape', { width: 80, height: 40 }));
@@ -62,4 +62,13 @@ test('switching to a smaller product keeps images visible and proportional', () 
   assert.ok(mapped.x + mapped.width <= 49 + 1e-9);
   assert.ok(mapped.y + mapped.height <= 75 + 1e-9);
   assert.ok(Math.abs(mapped.width / mapped.height - image.width / image.height) < 1e-9);
+});
+
+test('cover positioning moves freely on both axes without exposing the paper', () => {
+  assert.equal(clampCoverPosition(-30, 0, 50, 100), -30);
+  assert.equal(clampCoverPosition(-80, 0, 50, 100), -50);
+  assert.equal(clampCoverPosition(20, 0, 50, 100), 0);
+  assert.equal(clampCoverPosition(0, 10, 76, 100), 0);
+  assert.equal(clampCoverPosition(-40, 10, 76, 100), -14);
+  assert.equal(clampCoverPosition(40, 10, 76, 100), 10);
 });

@@ -1,7 +1,7 @@
 import { cadSelect, layerBounds, type SelectionPoint } from '../shared/selection';
 import { eraseLayers } from '../shared/eraser';
 import { scatterPetals } from '../shared/petals';
-import { scaleLayerAtPoint, validLayerSize } from '../shared/transform';
+import { clampCoverPosition, scaleLayerAtPoint, validLayerSize } from '../shared/transform';
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
@@ -56,7 +56,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     const baseWidth = Math.max(photoArea.width, photoArea.height * ratio), baseHeight = baseWidth / ratio;
     const zoom = Math.max(1, next.width / baseWidth, next.height / baseHeight);
     const width = baseWidth * zoom, height = baseHeight * zoom;
-    return { ...next, x: Math.max(photoArea.x + photoArea.width - width, Math.min(photoArea.x, next.x)), y: photoArea.y + (photoArea.height - height) / 2, width, height, rotation: 0 };
+    return { ...next, x: clampCoverPosition(next.x, photoArea.x, photoArea.width, width), y: clampCoverPosition(next.y, photoArea.y, photoArea.height, height), width, height, rotation: 0 };
   }
   // Keep the product at the chosen zoom. Only the controls use a bounded proxy.
   const scale = requestedScale;

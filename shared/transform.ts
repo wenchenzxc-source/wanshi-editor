@@ -2,6 +2,11 @@ import type { DesignLayer } from './model';
 
 export type CanvasSize = { w: number; h: number };
 
+export function clampCoverPosition(value: number, areaStart: number, areaSize: number, contentSize: number) {
+  const min = areaStart + areaSize - contentSize, max = areaStart;
+  return Math.max(min, Math.min(max, value));
+}
+
 export function validLayerSize(width: number, height: number) {
   return Number.isFinite(width) && Number.isFinite(height) && width >= 0.1 && height >= 0.1 && width <= 1000 && height <= 1000;
 }
