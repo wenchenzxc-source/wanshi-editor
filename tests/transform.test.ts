@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layerSchema, newLayer } from '../shared/model';
-import { resizeLayerDimension, validLayerSize } from '../shared/transform';
+import { remapImagesToCanvas, resizeLayerDimension, scaleLayerAtPoint, validLayerSize } from '../shared/transform';
 
 test('old and new layers resize proportionally unless unlocked or Shift is held', () => {
   const layer = layerSchema.parse(newLayer('shape', { width: 80, height: 40 }));
@@ -30,4 +30,36 @@ test('proportional size edits respect both axes of the saved model', () => {
   }
   for (const [width, height] of [[0.1, 1000], [1000, 0.1], [80, 40]]) assert.equal(validLayerSize(width, height), true);
   for (const [width, height] of [[0, 1], [1, 1001], [1001, 1], [NaN, 1], [1, Infinity]]) assert.equal(validLayerSize(width, height), false);
+});
+
+test('zooming an image keeps the cursor anchor fixed', () => {
+  const image = newLayer('image', { x: 10, y: 20, width: 40, height: 20 });
+  const zoomed = scaleLayerAtPoint(image, 2, { x: 30, y: 30 });
+  assert.deepEqual(
+    { x: zoomed.x, y: zoomed.y, width: zoomed.width, height: zoomed.height },
+    { x: -10, y: 10, width: 80, height: 40 },
+  );
+
+  const rotated = newLayer('image', { x: 20, y: 15, width: 30, height: 10, rotation: 37 });
+  const anchor = { x: 27, y: 24 };
+  const result = scaleLayerAtPoint(rotated, 1.6, anchor);
+  const toLocal = (layer: typeof rotated) => {
+    const radians = layer.rotation * Math.PI / 180, dx = anchor.x - layer.x, dy = anchor.y - layer.y;
+    return { x: dx * Math.cos(radians) + dy * Math.sin(radians), y: -dx * Math.sin(radians) + dy * Math.cos(radians) };
+  };
+  const before = toLocal(rotated), after = toLocal(result);
+  assert.ok(Math.abs(after.x - before.x * 1.6) < 1e-9);
+  assert.ok(Math.abs(after.y - before.y * 1.6) < 1e-9);
+});
+
+test('switching to a smaller product keeps images visible and proportional', () => {
+  const image = newLayer('image', { x: 20, y: 30, width: 100, height: 120 });
+  const decoration = newLayer('shape', { x: 5, y: 6, width: 7, height: 8 });
+  const [mapped, unchanged] = remapImagesToCanvas([image, decoration], { w: 148, h: 210 }, { w: 50, h: 76 }, 1);
+  assert.equal(unchanged, decoration);
+  assert.ok(mapped.width <= 48 && mapped.height <= 74);
+  assert.ok(mapped.x >= 1 && mapped.y >= 1);
+  assert.ok(mapped.x + mapped.width <= 49 + 1e-9);
+  assert.ok(mapped.y + mapped.height <= 75 + 1e-9);
+  assert.ok(Math.abs(mapped.width / mapped.height - image.width / image.height) < 1e-9);
 });

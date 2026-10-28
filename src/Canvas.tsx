@@ -1,7 +1,7 @@
 import { cadSelect, layerBounds, type SelectionPoint } from '../shared/selection';
 import { eraseLayers } from '../shared/eraser';
 import { scatterPetals } from '../shared/petals';
-import { validLayerSize } from '../shared/transform';
+import { scaleLayerAtPoint, validLayerSize } from '../shared/transform';
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
 import Konva from 'konva';
@@ -28,12 +28,14 @@ export type CropBox = { x: number; y: number; width: number; height: number };
 type Props = { photoAssetIds?: Set<string>; cropBox?: CropBox | null; setCropBox?: (box: CropBox) => void; liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
 type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
+type PinchZoom={id:string;startDistance:number;startLayer:DesignLayer;anchor:SelectionPoint;pending?:DesignLayer};
+type WheelZoom={id:string;layer:DesignLayer;timer:ReturnType<typeof setTimeout>};
 export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox, photoAssetIds }: Props) {
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
-  const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null);
+  const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null), pinchZoom = useRef<PinchZoom | null>(null), wheelZoom = useRef<WheelZoom | null>(null);
   function stroke(points: number[]) {
     const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1), r = paint!.size / 2;
     const x = Math.min(...xs) - r, y = Math.min(...ys) - r, width = Math.max(...xs) - x + r, height = Math.max(...ys) - y + r;
@@ -106,6 +108,44 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     setSnapLines(lines);
   }
   function pointer(stage:Konva.Stage){ const p=stage.getPointerPosition()!;return{x:p.x/scale-pad-b,y:p.y/scale-pad-b}; }
+  function showImageZoom(layer: DesignLayer) {
+    const node = nodes.current.get(layer.id); node?.setAttrs({ x: layer.x, y: layer.y, width: layer.width, height: layer.height, rotation: layer.rotation }); node?.getLayer()?.batchDraw(); live(layer);
+  }
+  function zoomImageWithWheel(layer: DesignLayer, e: Konva.KonvaEventObject<WheelEvent>) {
+    if (disabled || paint || cropBox || layer.kind !== 'image' || layer.locked) return;
+    e.evt.preventDefault(); e.cancelBubble = true; selectMany([]); select(layer.id);
+    const previous = wheelZoom.current;
+    if (previous && previous.id !== layer.id) { clearTimeout(previous.timer); commit(previous.layer); wheelZoom.current = null; }
+    const base = wheelZoom.current?.id === layer.id ? wheelZoom.current.layer : layer;
+    const factor = Math.max(.85, Math.min(1.18, Math.exp(-e.evt.deltaY * .0015)));
+    const next = constrainPhoto(base, scaleLayerAtPoint(base, factor, pointer(e.target.getStage()!)));
+    if (wheelZoom.current) clearTimeout(wheelZoom.current.timer);
+    const timer = setTimeout(() => { const pending = wheelZoom.current; if (!pending || pending.id !== layer.id) return; commit(pending.layer); live(null); wheelZoom.current = null; }, 140);
+    wheelZoom.current = { id: layer.id, layer: next, timer }; showImageZoom(next);
+  }
+  function touchPosition(stage: Konva.Stage, touch: Touch) { const rect = stage.container().getBoundingClientRect(); return { stage: { x: touch.clientX - rect.left, y: touch.clientY - rect.top }, design: { x: (touch.clientX - rect.left) / scale - pad - b, y: (touch.clientY - rect.top) / scale - pad - b } }; }
+  function beginPinch(e: Konva.KonvaEventObject<TouchEvent>) {
+    if (disabled || paint || cropBox || e.evt.touches.length !== 2) return false;
+    const stage = e.target.getStage()!, first = touchPosition(stage, e.evt.touches[0]), second = touchPosition(stage, e.evt.touches[1]);
+    const firstId = stage.getIntersection(first.stage)?.id(), secondId = stage.getIntersection(second.stage)?.id();
+    if (!firstId || firstId !== secondId) return false;
+    const layer = design.layers.find(item => item.id === firstId);
+    if (!layer || layer.kind !== 'image' || layer.locked) return false;
+    nodes.current.get(layer.id)?.stopDrag();
+    pinchZoom.current = { id: layer.id, startDistance: Math.hypot(e.evt.touches[1].clientX - e.evt.touches[0].clientX, e.evt.touches[1].clientY - e.evt.touches[0].clientY), startLayer: layer, anchor: { x: (first.design.x + second.design.x) / 2, y: (first.design.y + second.design.y) / 2 } };
+    selectMany([]); select(layer.id); e.evt.preventDefault(); e.cancelBubble = true; return true;
+  }
+  function movePinch(e: Konva.KonvaEventObject<TouchEvent>) {
+    const gesture = pinchZoom.current; if (!gesture || e.evt.touches.length < 2) return false;
+    const distance = Math.hypot(e.evt.touches[1].clientX - e.evt.touches[0].clientX, e.evt.touches[1].clientY - e.evt.touches[0].clientY);
+    const next = constrainPhoto(gesture.startLayer, scaleLayerAtPoint(gesture.startLayer, distance / Math.max(1, gesture.startDistance), gesture.anchor));
+    gesture.pending = next; nodes.current.get(gesture.id)?.stopDrag(); showImageZoom(next); e.evt.preventDefault(); e.cancelBubble = true; return true;
+  }
+  function finishPinch(e: Konva.KonvaEventObject<TouchEvent>) {
+    const gesture = pinchZoom.current; if (!gesture) return false;
+    if (gesture.pending) commit(gesture.pending); live(null); pinchZoom.current = null; e.evt.preventDefault(); e.cancelBubble = true; return true;
+  }
+  useEffect(() => () => { if (wheelZoom.current) clearTimeout(wheelZoom.current.timer); wheelZoom.current = null; pinchZoom.current = null; }, [design.templateId, design.sizeId, design.orientation]);
   function beginMarquee(e:Konva.KonvaEventObject<MouseEvent|TouchEvent>){
     if(disabled||paint||cropBox||e.target!==e.target.getStage())return;
     const start=pointer(e.target.getStage()!);const next={start,end:start,add:'shiftKey' in e.evt&&e.evt.shiftKey};
@@ -138,7 +178,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     setCropBox({ x: left, y: top, width: nextRight - left, height: nextBottom - top });
   }
   return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
-    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={beginMarquee} onTouchStart={beginMarquee} onMouseMove={moveMarquee} onTouchMove={moveMarquee} onMouseUp={finishMarquee} onTouchEnd={finishMarquee}>
+    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={beginMarquee} onTouchStart={e => { if (!beginPinch(e)) beginMarquee(e); }} onMouseMove={moveMarquee} onTouchMove={e => { if (!movePinch(e)) moveMarquee(e); }} onMouseUp={finishMarquee} onTouchEnd={e => { if (!finishPinch(e)) finishMarquee(); }}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
         <Rect width={fullW} height={fullH} cornerRadius={radius} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
         <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
@@ -147,6 +187,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
             {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
+              onWheel={l.kind === 'image' ? e => zoomImageWithWheel(l, e) : undefined}
               onClick={e => { if(e.evt.shiftKey && !isPhoto(l))selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
                 if(isPhoto(l)){selectMany([]);select(l.id);}
                 else if(selectedIds.includes(l.id)){groupDrag.current={id:l.id,startX:e.target.x(),startY:e.target.y(),original:new Map(design.layers.filter(x=>selectedIds.includes(x.id)&&x.visible&&!x.locked).map(x=>[x.id,{x:x.x,y:x.y}]))};}
