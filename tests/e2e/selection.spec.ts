@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 test('CAD box selection moves and deletes scattered assets without toolbar mode',async({page})=>{
  await page.setViewportSize({width:1600,height:1200});await page.goto('/');
+ const draft=()=>page.evaluate(async()=>(await fetch('/api/designs/'+localStorage.getItem('wanshi:last-design'))).json());
  await page.getByRole('button',{name:'素材',exact:true}).click();await page.getByRole('button',{name:'暖光星芒',exact:true}).click();
+ await expect.poll(async()=>(await draft()).design.layers.length).toBe(1);
  await page.getByRole('button',{name:'上傳',exact:true}).click();await expect(page.locator('.asset-tile')).toHaveCount(0);
  await page.getByRole('button',{name:'筆刷',exact:true}).click();await page.getByRole('button',{name:'飄落櫻花',exact:true}).click();await page.getByRole('button',{name:'灑落整個版面',exact:true}).click();
- const draft=()=>page.evaluate(async()=>(await fetch('/api/designs/'+localStorage.getItem('wanshi:last-design'))).json());
  await expect.poll(async()=>(await draft()).design.layers.length).toBe(7);
  await page.getByRole('button',{name:'選取／移動',exact:true}).click();
  await expect(page.getByRole('button',{name:'框選／多選',exact:true})).toBeHidden();

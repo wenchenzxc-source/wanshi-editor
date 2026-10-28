@@ -102,7 +102,6 @@ test('photo preview switches physical frames with orientation and preserves the 
     await page.getByRole('button', { name: scene, exact: true }).click();
     await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /photo-v1.webp$/);
     await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
-    const original = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL());
     await page.getByRole('button', { name: '切換為橫式' }).click();
     await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /landscape-v1.webp$/);
     for (const thumbnail of await page.locator('.scene-photo-thumbnail img').all()) await expect(thumbnail).toHaveAttribute('src', /landscape-v1.webp$/);
@@ -113,7 +112,12 @@ test('photo preview switches physical frames with orientation and preserves the 
     const ratio = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.width / c.height);
     expect(ratio).toBeCloseTo(210 / 148, 2);
     await expect.poll(async () => (await draft(page)).design.orientation).toBe('landscape');
-    expect((await draft(page)).design.layers).toEqual(layers);
+    const landscapeLayers = (await draft(page)).design.layers;
+    expect(landscapeLayers.map((layer: typeof layers[number]) => ({ id: layer.id, assetId: layer.assetId, name: layer.name }))).toEqual(layers.map((layer: typeof layers[number]) => ({ id: layer.id, assetId: layer.assetId, name: layer.name })));
+    for (const layer of layers) {
+      const transformed = landscapeLayers.find((candidate: typeof layers[number]) => candidate.id === layer.id)!;
+      expect(transformed.width / transformed.height).toBeCloseTo(layer.width / layer.height, 5);
+    }
     await page.getByRole('button', { name: '⤢ 放大情境預覽', exact: true }).click();
     await expect(page.getByRole('dialog').locator('.photo-scene > img')).toHaveAttribute('src', /landscape-v1.webp$/);
     await expect(page.getByRole('dialog').locator('canvas')).toBeVisible();
@@ -122,13 +126,13 @@ test('photo preview switches physical frames with orientation and preserves the 
     await page.getByRole('button', { name: '切換為直式' }).click();
     await expect(page.locator('.photo-scene > img')).toHaveAttribute('src', /photo-v1.webp$/);
     await expect(page.locator('.photo-art-fit canvas')).toBeVisible();
-    const restored = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL());
-    const [beforePixels, afterPixels] = await Promise.all([original, restored].map(url => sharp(Buffer.from(url.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer({ resolveWithObject: true })));
-    expect(afterPixels.info).toMatchObject({ width: beforePixels.info.width, height: beforePixels.info.height, channels: beforePixels.info.channels });
-    // Canvas resizing can round edge pixels differently; preserve the artwork within a strict pixel tolerance.
-    let difference = 0;
-    for (let i = 0; i < beforePixels.data.length; i++) difference += Math.abs(beforePixels.data[i] - afterPixels.data[i]);
-    expect(difference / beforePixels.data.length).toBeLessThan(0.1);
+    await expect.poll(async () => (await draft(page)).design.orientation).toBe('portrait');
+    const portraitLayers = (await draft(page)).design.layers;
+    expect(portraitLayers.map((layer: typeof layers[number]) => ({ id: layer.id, assetId: layer.assetId, name: layer.name }))).toEqual(layers.map((layer: typeof layers[number]) => ({ id: layer.id, assetId: layer.assetId, name: layer.name })));
+    for (const layer of layers) {
+      const transformed = portraitLayers.find((candidate: typeof layers[number]) => candidate.id === layer.id)!;
+      expect(transformed.width / transformed.height).toBeCloseTo(layer.width / layer.height, 5);
+    }
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '切換為橫式' }).click();

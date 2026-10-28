@@ -15,10 +15,10 @@ test('selected controls stay near the canvas and off-canvas artwork can be recov
   await expect(page.getByLabel('文字內容')).toBeVisible();
 
   const inspector = await page.locator('.right-panel > .inspector').boundingBox();
-  const preview = await page.locator('.right-panel > .product-preview-panel').boundingBox();
+  const preview = await page.locator('.right-panel .product-preview-panel').boundingBox();
   expect(inspector).not.toBeNull();
   expect(preview).not.toBeNull();
-  expect(inspector!.y).toBeLessThan(preview!.y);
+  expect(preview!.y).toBeLessThan(inspector!.y);
 
   await page.getByRole('button', { name: '壓克力磚 立體透明底材・可選尺寸', exact: true }).click();
   const warning = page.locator('.off-canvas-warning');

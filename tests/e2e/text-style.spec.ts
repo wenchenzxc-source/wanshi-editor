@@ -11,6 +11,8 @@ test('text color, size, emphasis, alignment and spacing persist and match the li
   await page.goto('/');
   await page.getByRole('button', { name: '文字', exact: true }).click();
   await page.getByRole('button', { name: '加入標題', exact: true }).click();
+  await expect(page.getByRole('button', { name: '調字', exact: true })).toHaveClass(/active/);
+  expect(await page.locator('.asset-panel').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   const before = await page.getByTestId('product-preview').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
 
   await page.getByLabel('文字內容').fill('萬事造物\nText Style');
@@ -57,6 +59,7 @@ test('text color, size, emphasis, alignment and spacing persist and match the li
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('.text-style-controls').scrollIntoViewIfNeeded();
   await expect(page.locator('.text-style-controls')).toBeVisible();
+  expect(await page.locator('.asset-panel').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   await page.screenshot({ path: 'test-results/text-style-mobile.png', fullPage: true });
