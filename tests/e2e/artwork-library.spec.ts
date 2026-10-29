@@ -26,5 +26,14 @@ test('original hand-painted botanical and stationery categories load and remain 
   await expect(page.getByRole('button', { name: '乾燥花小信封', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '乾燥花小信封', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.at(-1)?.name).toBe('乾燥花小信封');
+
+  await page.getByRole('button', { name: '素材', exact: true }).click();
+  await categories.getByRole('button', { name: '節慶', exact: true }).click();
+  for (const name of ['聖誕・冬日松果枝', '新年・紅梅宮燈', '情人節・玫瑰蠟封信', '中秋・桂花滿月']) {
+    await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+  }
+  await expect.poll(async () => page.locator('.art-grid img').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await page.getByRole('button', { name: '聖誕・冬日松果枝', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.at(-1)?.name).toBe('聖誕・冬日松果枝');
   expect(errors).toEqual([]);
 });
