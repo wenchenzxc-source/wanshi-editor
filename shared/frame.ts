@@ -22,3 +22,21 @@ export function drawFrame(ctx: CanvasRenderingContext2D, l: DesignLayer) {
   ctx.save(); ctx.translate(w - inset, h - inset); ctx.rotate(Math.PI); ornament(); ctx.restore();
   ctx.restore();
 }
+
+// Generated frame art is sliced into corners and connecting edges. This keeps
+// the hand-painted ornaments proportional when the page changes orientation.
+export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, image: CanvasImageSource) {
+  const source = image as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+  const sw = Number(source.naturalWidth || source.width || 0), sh = Number(source.naturalHeight || source.height || 0);
+  if (!sw || !sh) return;
+  const sx = sw * .31, sy = sh * .31;
+  const corner = Math.min(l.width, l.height) * .31;
+  const sourceX = [0, sx, sw - sx], sourceY = [0, sy, sh - sy];
+  const sourceW = [sx, sw - 2 * sx, sx], sourceH = [sy, sh - 2 * sy, sy];
+  const destX = [0, corner, l.width - corner], destY = [0, corner, l.height - corner];
+  const destW = [corner, Math.max(0, l.width - 2 * corner), corner], destH = [corner, Math.max(0, l.height - 2 * corner), corner];
+  for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) {
+    if (x === 1 && y === 1) continue;
+    if (destW[x] && destH[y]) ctx.drawImage(image, sourceX[x], sourceY[y], sourceW[x], sourceH[y], destX[x], destY[y], destW[x], destH[y]);
+  }
+}

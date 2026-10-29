@@ -31,4 +31,8 @@ export const artCatalog: readonly Artwork[] = [
   { id: 'halloween-frame', name: '蛛網相框', category: '圖框', tags: ['萬聖節'], svg: svg(`<rect x="3" y="3" width="94" height="94" rx="3" fill="none" stroke="#776787" stroke-width="1.5"/>${web}<g transform="translate(100 100) rotate(180)">${web}</g>`) },
   { id: 'starlight-frame', name: '星光相框', category: '圖框', tags: ['光影星芒'], svg: svg(`<rect x="7" y="7" width="86" height="86" rx="2" fill="none" stroke="#dac291" stroke-width=".7"/><g transform="translate(10 10) scale(.6)">${star}</g><g transform="translate(90 90) scale(.6)">${star}</g>`) },
   { id: 'petal-frame', name: '花瓣邊框', category: '圖框', tags: ['花瓣'], svg: svg(`<rect x="6" y="6" width="88" height="88" rx="3" fill="none" stroke="#e6b3bb" stroke-width=".5"/>${[[12,25,20],[86,94,-160],[15,88,-45],[86,24,155]].map(([x,y,r])=>`<g transform="translate(${x} ${y}) rotate(${r}) scale(.65)">${petal}</g>`).join('')}`) },
+  { id: 'christmas-pine-frame', name: '聖誕・松果枝邊框', category: '圖框', tags: ['節慶', '聖誕節'], file: 'christmas-pine-frame-v1.png' },
+  { id: 'lunar-plum-frame', name: '新年・紅梅宮燈邊框', category: '圖框', tags: ['節慶', '農曆新年'], file: 'lunar-plum-frame-v1.png' },
+  { id: 'valentine-rose-frame', name: '情人節・霧粉玫瑰邊框', category: '圖框', tags: ['節慶', '情人節'], file: 'valentine-rose-frame-v1.png' },
+  { id: 'midautumn-osmanthus-frame', name: '中秋・桂花月影邊框', category: '圖框', tags: ['節慶', '中秋節'], file: 'midautumn-osmanthus-frame-v1.png' },
 ] as const;

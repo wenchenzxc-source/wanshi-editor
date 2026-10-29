@@ -182,7 +182,12 @@ function App() {
   async function addArtwork(artworkId: string) { await run(async () => {
     const entry = artCatalog.find(a => a.id === artworkId);
     if (entry?.category === '圖框') {
-      const frame = newLayer('frame', { name: entry.name, frameId: artworkId as NonNullable<DesignLayer['frameId']>, locked: true });
+      let frameAsset = entry.file ? assets.find(a => !a.deletedAt && a.libraryArtworkId === entry.id) : undefined;
+      if (entry.file && !frameAsset) {
+        frameAsset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
+        setAssets(a => [...a, frameAsset!]);
+      }
+      const frame = newLayer('frame', { name: entry.name, frameId: artworkId as NonNullable<DesignLayer['frameId']>, ...(frameAsset ? { assetId: frameAsset.id } : {}), locked: true });
       const names = artCatalog.filter(a => a.category === '圖框').map(a => a.name as string);
       change({ ...designRef.current!, layers: [...designRef.current!.layers.filter(l => l.kind !== 'frame' && !(l.kind === 'image' && names.includes(l.name) && assets.some(a => a.id === l.assetId && names.some(n => a.originalName === `${n}.png`)))), frame] });
       setSelected(frame.id); await save(designRef.current); return;

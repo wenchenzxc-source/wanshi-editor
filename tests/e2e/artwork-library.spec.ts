@@ -37,3 +37,24 @@ test('original hand-painted botanical and stationery categories load and remain 
   await expect.poll(async () => (await draft(page)).design.layers.at(-1)?.name).toBe('聖誕・冬日松果枝');
   expect(errors).toEqual([]);
 });
+
+test('holiday frames load as fitted locked artwork and preserve their corner proportions', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '素材', exact: true }).click();
+  const categories = page.getByRole('group', { name: '素材分類' });
+  await categories.getByRole('button', { name: '圖框', exact: true }).click();
+  for (const name of ['聖誕・松果枝邊框', '新年・紅梅宮燈邊框', '情人節・霧粉玫瑰邊框', '中秋・桂花月影邊框']) {
+    await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+  }
+  await expect.poll(async () => page.locator('.art-grid img').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await page.getByRole('button', { name: /聖誕・松果枝邊框/ }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((layer: any) => layer.kind === 'frame')?.frameId).toBe('christmas-pine-frame');
+  let frame = (await draft(page)).design.layers.find((layer: any) => layer.kind === 'frame');
+  expect(frame).toMatchObject({ x: 5, y: 5, width: 138, height: 200, locked: true, rotation: 0 });
+  expect(frame.assetId).toBeTruthy();
+  await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((layer: any) => layer.kind === 'frame')?.width).toBe(200);
+  frame = (await draft(page)).design.layers.find((layer: any) => layer.kind === 'frame');
+  expect(frame).toMatchObject({ x: 5, y: 5, width: 200, height: 138, locked: true, rotation: 0 });
+});

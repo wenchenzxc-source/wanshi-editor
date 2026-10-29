@@ -12,7 +12,7 @@ export const layerSchema = z.object({
   petalPose: z.enum(['open', 'tilted', 'edge', 'curled']).optional(),
   flowerType: z.enum(['sakura', 'rose']).optional(),
   brushRatio: z.number().positive().max(1).optional(),
-  frameId: z.enum(['halloween-frame', 'starlight-frame', 'petal-frame']).optional(),
+  frameId: z.enum(['halloween-frame', 'starlight-frame', 'petal-frame', 'christmas-pine-frame', 'lunar-plum-frame', 'valentine-rose-frame', 'midautumn-osmanthus-frame']).optional(),
   x: z.number().min(-1000).max(1000), y: z.number().min(-1000).max(1000),
   width: z.number().min(0.1).max(1000), height: z.number().min(0.1).max(1000),
   aspectRatioLocked: z.boolean().optional(),

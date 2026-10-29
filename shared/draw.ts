@@ -32,7 +32,7 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
   ctx.restore();
 }
 import { getFont } from './fonts';
-import { drawFrame } from './frame';
+import { drawFrame, drawFrameImage } from './frame';
 export const FONT = 'Wanshi Sans';
 export function textFont(layer: DesignLayer, size = layer.fontSize || 10) {
   const style = layer.fontStyle === 'italic' ? 'italic ' : '';
@@ -69,7 +69,7 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
     if (l.points.every((v, i) => v === l.points![i % 2])) { ctx.beginPath(); ctx.arc(l.points[0] * l.width, l.points[1] * l.height, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill(); }
   }
   else if (l.kind === 'shape' && l.petalPose) drawFloatingPetal(ctx, l);
-  else if (l.kind === 'frame') drawFrame(ctx, l);
+  else if (l.kind === 'frame') image ? drawFrameImage(ctx, l, image) : drawFrame(ctx, l);
   else if (l.kind === 'image' && image) {
     const filters = [
       `brightness(${l.brightness ?? 1})`,
