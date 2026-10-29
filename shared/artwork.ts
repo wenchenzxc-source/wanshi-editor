@@ -1,6 +1,6 @@
-// Original vector artwork authored for Wanshi. No third-party images or fonts.
+// Original artwork authored or generated for Wanshi. No third-party images or fonts.
 // Permission: use, modify and reproduce commercially within Wanshi designs/products.
-export const artCategories = ['全部', '花瓣', '光影星芒', '萬聖節', '圖框'] as const;
+export const artCategories = ['全部', '花瓣', '植物花草', '手繪小物', '光影星芒', '萬聖節', '圖框'] as const;
 const svg = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 100 100"><defs><radialGradient id="glow"><stop stop-color="#fffef4"/><stop offset=".15" stop-color="#ffe2a4" stop-opacity=".85"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient><linearGradient id="petal" x2=".8" y2="1"><stop stop-color="#fff2ef"/><stop offset=".5" stop-color="#f4b5be"/><stop offset="1" stop-color="#d97699"/></linearGradient></defs>${body}</svg>`;
 const petal = `<path d="M0 0 C-22 -8 -22 -37 0 -27 C22 -37 22 -8 0 0Z" fill="url(#petal)"/><path d="M0 -2 Q-3 -15 0 -23" stroke="#fff0ed" stroke-width=".6" fill="none"/>`;
 const star = `<circle r="23" fill="url(#glow)"/><path d="M0 -18 Q2 -2 18 0 Q2 2 0 18 Q-2 2 -18 0 Q-2 -2 0 -18Z" fill="#fff6db"/><circle r="2" fill="#fff"/>`;
@@ -12,6 +12,12 @@ export const artCatalog: readonly Artwork[] = [
   { id: 'rose-single', name: '獨立玫瑰花瓣', category: '花瓣', file: 'rose-single-v1.png' },
   { id: 'sakura-natural', name: '淡櫻花枝', category: '花瓣', file: 'sakura-natural-v1.png' },
   { id: 'rose-natural', name: '霧粉玫瑰', category: '花瓣', file: 'rose-natural-v1.png' },
+  { id: 'eucalyptus-handpaint', name: '霧青尤加利', category: '植物花草', file: 'eucalyptus-handpaint-v1.png' },
+  { id: 'cosmos-handpaint', name: '淡粉波斯菊', category: '植物花草', file: 'cosmos-handpaint-v1.png' },
+  { id: 'lavender-handpaint', name: '薰衣草小束', category: '植物花草', file: 'lavender-handpaint-v1.png' },
+  { id: 'ginkgo-handpaint', name: '暖秋銀杏', category: '植物花草', file: 'ginkgo-handpaint-v1.png' },
+  { id: 'linen-bow-handpaint', name: '霧藍布緞結', category: '手繪小物', file: 'linen-bow-handpaint-v1.png' },
+  { id: 'letter-flower-handpaint', name: '乾燥花小信封', category: '手繪小物', file: 'letter-flower-handpaint-v1.png' },
   { id: 'star-glow', name: '暖光星芒', category: '光影星芒', svg: svg(`<g transform="translate(50 50) scale(1.8)">${star}</g>`) },
   { id: 'stardust', name: '細碎星光', category: '光影星芒', svg: svg([[25,25,1],[67,42,.65],[40,75,.45],[80,80,.3]].map(([x,y,s])=>`<g transform="translate(${x} ${y}) scale(${s})">${star}</g>`).join('')) },
   { id: 'bokeh', name: '金色光點', category: '光影星芒', svg: svg([[25,30,20],[60,50,28],[75,83,13],[24,80,10]].map(([x,y,r])=>`<circle cx="${x}" cy="${y}" r="${r}" fill="url(#glow)"/>`).join('')) },
