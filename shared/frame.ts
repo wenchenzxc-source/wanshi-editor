@@ -23,20 +23,57 @@ export function drawFrame(ctx: CanvasRenderingContext2D, l: DesignLayer) {
   ctx.restore();
 }
 
-// Generated frame art is sliced into corners and connecting edges. This keeps
-// the hand-painted ornaments proportional when the page changes orientation.
+// Generated frame art is rendered as a fixed-width straight-line underlay plus
+// four proportional corners. Only the length of a straight edge changes with
+// the page; its cross-axis scale (and therefore line weight) stays constant.
 export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, image: CanvasImageSource) {
   const source = image as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
   const sw = Number(source.naturalWidth || source.width || 0), sh = Number(source.naturalHeight || source.height || 0);
   if (!sw || !sh) return;
-  const sx = sw * .31, sy = sh * .31;
-  const corner = Math.min(l.width, l.height) * .31;
-  const sourceX = [0, sx, sw - sx], sourceY = [0, sy, sh - sy];
-  const sourceW = [sx, sw - 2 * sx, sx], sourceH = [sy, sh - 2 * sy, sy];
-  const destX = [0, corner, l.width - corner], destY = [0, corner, l.height - corner];
-  const destW = [corner, Math.max(0, l.width - 2 * corner), corner], destH = [corner, Math.max(0, l.height - 2 * corner), corner];
-  for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) {
-    if (x === 1 && y === 1) continue;
-    if (destW[x] && destH[y]) ctx.drawImage(image, sourceX[x], sourceY[y], sourceW[x], sourceH[y], destX[x], destY[y], destW[x], destH[y]);
-  }
+  // The painted ornaments extend well beyond the former 31% cut. A 46% corner
+  // crop keeps the complete floral cluster; the edge itself is sampled from a
+  // narrow, clean section of the source so no leaf or flower is stretched.
+  const sx = sw * .46, sy = sh * .46;
+  const short = Math.min(l.width, l.height);
+  const base = short * .38;
+  const maxCorner = short * .48;
+  const size = (scale = 1) => Math.min(maxCorner, base * scale);
+  const tl = size(l.frameTopLeftScale), tr = size(l.frameTopRightScale), br = size(l.frameBottomRightScale), bl = size(l.frameBottomLeftScale);
+  const draw = (sourceX: number, sourceY: number, sourceW: number, sourceH: number, x: number, y: number, width: number, height: number) => {
+    if (width > 0 && height > 0) ctx.drawImage(image, sourceX, sourceY, sourceW, sourceH, x, y, width, height);
+  };
+
+  // Each source needs a clean sample between its corner ornament and any
+  // centre medallion. Sampling only 0.4% avoids stretching decorative objects.
+  const samples: Record<string, { x: number; y: number }> = {
+    'christmas-pine-frame': { x: .40, y: .42 },
+    'lunar-plum-frame': { x: .48, y: .48 },
+    'valentine-rose-frame': { x: .50, y: .48 },
+    'midautumn-osmanthus-frame': { x: .50, y: .48 },
+  };
+  const sample = samples[l.frameId || ''] || { x: .50, y: .50 };
+  const stripW = Math.max(2, sw * .004), stripH = Math.max(2, sh * .004);
+  const sampleX = Math.max(0, Math.min(sw - stripW, sw * sample.x - stripW / 2));
+  const sampleY = Math.max(0, Math.min(sh - stripH, sh * sample.y - stripH / 2));
+
+  // Full-length strips sit beneath the corners. This removes seams when corner
+  // sizes differ and keeps edge thickness independent from all four controls.
+  draw(sampleX, 0, stripW, sy, 0, 0, l.width, base);
+  draw(sampleX, sh - sy, stripW, sy, 0, l.height - base, l.width, base);
+  draw(0, sampleY, sx, stripH, 0, 0, base, l.height);
+  draw(sw - sx, sampleY, sx, stripH, l.width - base, 0, base, l.height);
+
+  // Keep any star, bead or small flower at the centre of each side as a
+  // fixed-size overlay. It is never included in the stretched line sample.
+  const centreSourceW = sw * .12, centreSourceH = sh * .12;
+  const centreW = base * centreSourceW / sy, centreH = base * centreSourceH / sx;
+  draw((sw - centreSourceW) / 2, 0, centreSourceW, sy, (l.width - centreW) / 2, 0, centreW, base);
+  draw((sw - centreSourceW) / 2, sh - sy, centreSourceW, sy, (l.width - centreW) / 2, l.height - base, centreW, base);
+  draw(0, (sh - centreSourceH) / 2, sx, centreSourceH, 0, (l.height - centreH) / 2, base, centreH);
+  draw(sw - sx, (sh - centreSourceH) / 2, sx, centreSourceH, l.width - base, (l.height - centreH) / 2, base, centreH);
+
+  draw(0, 0, sx, sy, 0, 0, tl, tl);
+  draw(sw - sx, 0, sx, sy, l.width - tr, 0, tr, tr);
+  draw(sw - sx, sh - sy, sx, sy, l.width - br, l.height - br, br, br);
+  draw(0, sh - sy, sx, sy, 0, l.height - bl, bl, bl);
 }

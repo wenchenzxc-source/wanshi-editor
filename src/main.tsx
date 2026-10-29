@@ -13,7 +13,7 @@ import { PhotoHolderOptions, defaultPhotoHolder } from './PhotoHolder';
 import { dimensions, fitFrames, emptyDesign, newLayer, materials, supportsDuplex, withPrintStack, stackLabel, resolveTemplate, badgeAccessories, badgeRadius, photoImageArea, type Material, type Asset, type Design, type DesignLayer, type Template, type VersionInfo } from '../shared/model';
 import './styles.css';
 import './studio.css';
-import { ArtLibrary } from './ArtLibrary';
+import { ArtLibrary, FrameLibrary } from './ArtLibrary';
 import { artCatalog } from '../shared/artwork';
 import { textFont, wrapTextLines } from '../shared/draw';
 import { Cart, type CartItem } from './Cart';
@@ -81,6 +81,7 @@ function App() {
   const faceLayers = design?.layers.filter(l => (l.face || 'front') === face) || [];
   const canvasDesign = design && { ...design, layers: faceLayers };
   const chosen = faceLayers.find(l => l.id === selected);
+  const activeFrame = faceLayers.find(l => l.kind === 'frame');
   function setSelected(id: string | null) {
     if (id !== selected) setCropBox(null);
     setSelectedState(id);
@@ -93,6 +94,9 @@ function App() {
     } else if (next?.kind === 'text') {
       if (!editingTab) previousTool.current = tab;
       setTab('text-edit'); setPaintMode('select');
+      requestAnimationFrame(() => document.querySelector('.asset-panel')?.scrollTo({ top: 0 }));
+    } else if (next?.kind === 'frame') {
+      setTab('frames'); setPaintMode('select');
       requestAnimationFrame(() => document.querySelector('.asset-panel')?.scrollTo({ top: 0 }));
     } else if (editingTab) setTab(previousTool.current);
   }
@@ -187,7 +191,8 @@ function App() {
         frameAsset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
         setAssets(a => [...a, frameAsset!]);
       }
-      const frame = newLayer('frame', { name: entry.name, frameId: artworkId as NonNullable<DesignLayer['frameId']>, ...(frameAsset ? { assetId: frameAsset.id } : {}), locked: true });
+      const currentFrame = designRef.current!.layers.find(l => l.kind === 'frame');
+      const frame = newLayer('frame', { name: entry.name, frameId: artworkId as NonNullable<DesignLayer['frameId']>, ...(frameAsset ? { assetId: frameAsset.id } : {}), locked: true, visible: currentFrame?.visible ?? true, frameTopLeftScale: currentFrame?.frameTopLeftScale ?? 1, frameTopRightScale: currentFrame?.frameTopRightScale ?? 1, frameBottomRightScale: currentFrame?.frameBottomRightScale ?? 1, frameBottomLeftScale: currentFrame?.frameBottomLeftScale ?? 1 });
       const names = artCatalog.filter(a => a.category === '圖框').map(a => a.name as string);
       change({ ...designRef.current!, layers: [...designRef.current!.layers.filter(l => l.kind !== 'frame' && !(l.kind === 'image' && names.includes(l.name) && assets.some(a => a.id === l.assetId && names.some(n => a.originalName === `${n}.png`)))), frame] });
       setSelected(frame.id); await save(designRef.current); return;
@@ -273,8 +278,8 @@ function App() {
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')} aria-label="關閉錯誤">×</button><button onClick={() => save().catch(report)}>重試儲存</button></div>}
     {failed.length > 0 && <div className="error" role="alert">有 {failed.length} 張圖片載入失敗，請重新整理後再確認輸出。</div>}
     <div className="workspace">
-      <nav className="rail" aria-label="素材面板">{[['uploads', '↥', '上傳'], ['text', 'T', '文字'], ['elements', '✿', '素材'], ['brush', '〰', '筆刷'], ...(chosen?.kind === 'image' ? [['image', '◐', '調圖']] : chosen?.kind === 'text' ? [['text-edit', 'Aa', '調字']] : [])].map(([id, icon, name]) => <button key={id} aria-label={name} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setPaintMode('select'); }}><b>{icon}</b><span>{name}</span></button>)}</nav>
-      <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${tab === 'uploads' && (template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', 'text-edit': '調整文字', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' || tab === 'text-edit' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
+      <nav className="rail" aria-label="素材面板">{[['uploads', '↥', '上傳'], ['text', 'T', '文字'], ['elements', '✿', '素材'], ['frames', '▣', '邊框'], ['brush', '〰', '筆刷'], ...(chosen?.kind === 'image' ? [['image', '◐', '調圖']] : chosen?.kind === 'text' ? [['text-edit', 'Aa', '調字']] : [])].map(([id, icon, name]) => <button key={id} aria-label={name} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setPaintMode('select'); }}><b>{icon}</b><span>{name}</span></button>)}</nav>
+      <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${tab === 'uploads' && (template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', 'text-edit': '調整文字', frames: '邊框與角落', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' || tab === 'text-edit' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
           {chosenIsPhoto && selectedAsset ? <PhotoImageControls layer={chosen} asset={selectedAsset} design={design} template={template} patch={patchLayer}/> : <><TransformControls layer={chosen} patch={patchLayer} disabled={busy || chosen.locked || !!cropBox} restore={selectedAsset ? restoreImageRatio : undefined}/><ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/></>}
@@ -284,12 +289,20 @@ function App() {
           <small className="muted">{config?.backgroundRemoval ? '將圖片送往 remove.bg 處理；原圖完整保留。' : '需在伺服器設定 remove.bg 金鑰。'}</small>
           {selectedAsset?.sourceAssetId && <button onClick={() => patchLayer({ assetId: selectedAsset.sourceAssetId })}>還原原始圖片</button>}
           {effectivePpi !== null && <p className={effectivePpi < MIN_IMAGE_PPI ? 'resolution-warning' : 'muted'}>目前有效解析度：約 {effectivePpi} PPI {effectivePpi < MIN_IMAGE_PPI ? `（低於 ${MIN_IMAGE_PPI} PPI 最低標準）` : '（符合印前標準）'}</p>}
-          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
+          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', frames: '邊框', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
         </section>}
         {tab === 'text-edit' && chosen?.kind === 'text' && <section className="image-edit-panel text-edit-panel" aria-label="已選文字編輯">
           <div className="selected-image-card"><span><b>{chosen.name}</b><small>文字圖層・即時同步</small></span></div>
           <TextControls layer={chosen} patch={patchLayer}/>
-          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
+          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', frames: '邊框', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
+        </section>}
+        {tab === 'frames' && <section className="image-edit-panel frame-edit-panel" aria-label="邊框選擇與調整">
+          <FrameLibrary add={addArtwork} disabled={busy} currentId={activeFrame?.frameId}/>
+          {activeFrame && <><div className="selected-image-heading"><div><b>{activeFrame.name}</b><small>四角＋四邊群組圖框</small></div></div>
+          <p className="muted">四個角落保持正方形比例；四條直線只沿長度延伸，線條粗度固定並藏在角落下方。</p>
+          {activeFrame.assetId ? <div className="frame-corner-controls"><b>四角大小</b><div className="frame-corner-grid">{([['左上角', 'frameTopLeftScale'], ['右上角', 'frameTopRightScale'], ['右下角', 'frameBottomRightScale'], ['左下角', 'frameBottomLeftScale']] as const).map(([label, key]) => <label key={key}><span>{label}<output>{Math.round((activeFrame[key] ?? 1) * 100)}%</output></span><input aria-label={`${label}大小`} type="range" min="0.45" max="1.5" step="0.05" value={activeFrame[key] ?? 1} disabled={busy} onChange={e => patchLayer({ [key]: +e.target.value }, activeFrame.id)}/></label>)}</div><button disabled={busy} onClick={() => patchLayer({ frameTopLeftScale: 1, frameTopRightScale: 1, frameBottomRightScale: 1, frameBottomLeftScale: 1 }, activeFrame.id)}>四角恢復 100%</button><small>可分別調整 45%–150%；設定會在更換其他邊框時沿用。</small></div> : <p className="empty-note">此向量圖框會自動適應版面，不需調整角落大小。</p>}
+          <div className="frame-edit-actions"><button disabled={busy} onClick={() => patchLayer({ visible: !activeFrame.visible }, activeFrame.id)}>{activeFrame.visible ? '隱藏圖框' : '顯示圖框'}</button><button className="danger" disabled={busy} onClick={() => { change({ ...design, layers: design.layers.filter(l => l.id !== activeFrame.id) }); if (selected === activeFrame.id) setSelected(null); }}>移除圖框</button></div></>}
+          {!activeFrame && <p className="empty-note">尚未套用邊框。從上方選一款後，四角比例與顯示設定會集中在這裡。</p>}
         </section>}
         {tab === 'uploads' && template.presentation === 'photo-holder' && <PhotoHolderOptions design={design} change={change} disabled={busy}/>}
         {tab === 'uploads' && template.presentation === 'acrylic-badge' && <section className="badge-accessory-panel" aria-label="識別牌配件與孔槽"><h3>配件與孔槽</h3><div className="badge-accessory-buttons">{badgeAccessories.map(a => <button key={a.id} disabled={busy} aria-pressed={design.badgeAccessory === a.id} onClick={() => change({ ...design, badgeAccessory: a.id, slot: { enabled: true, widthMm: a.widthMm, heightMm: a.heightMm, shape: a.shape, ...(a.shape === 'circle' ? { position: design.slot?.position || 'center' } : {}) } })}>{a.image ? <img src={`/accessories/${a.image}`} alt=""/> : <span className="accessory-symbol" aria-hidden="true">♧</span>}<span><b>{a.name}</b><small>{a.shape === 'circle' ? `圓孔 Ø${a.widthMm} mm` : `長槽 ${a.widthMm} × ${a.heightMm} mm`}</small></span></button>)}</div><div className="badge-extra-options"><button disabled={busy} aria-pressed={design.badgeAccessory === 'none' || (!design.badgeAccessory && !design.slot?.enabled)} onClick={() => change({ ...design, badgeAccessory: 'none', slot: undefined })}>不開孔</button><button disabled={busy} aria-pressed={design.badgeAccessory === 'custom' || (!design.badgeAccessory && !!design.slot?.enabled)} onClick={() => change({ ...design, badgeAccessory: 'custom', slot: { enabled: true, widthMm: design.slot?.widthMm || 12, heightMm: design.slot?.heightMm || 3, shape: 'slot' } })}>自訂長槽</button></div>
@@ -322,7 +335,7 @@ function App() {
       </main>
       <aside className={`right-panel ${chosen ? 'has-selection' : ''}`}><div className="panel-heading"><span>成品預覽</span><small className="live-tag">● 即時同步 · 僅供預覽</small></div><div className="protected-preview protected-scene"><ProductScene design={preview!} template={template} images={images}/></div><div className="specs"><span>{template.presentation === 'photo-holder' ? '相紙尺寸' : '成品尺寸'}<b>{mm!.w} × {mm!.h} mm</b></span><span>圖稿輸出<b>{template.dpi} PPI</b></span></div>
         <div className="inspector"><div className="panel-heading"><span>{chosen ? '圖層設定' : '開始你的創作'}</span>{chosen && <small>{chosen.kind === 'uv' ? 'UV 效果' : chosen.kind === 'image' ? '圖片' : chosen.kind === 'text' ? '文字' : '裝飾'}</small>}</div>
-          {chosen?.kind === 'frame' ? <><p className="muted">圖框自動貼合版面，隨尺寸與直橫式更新。角落裝飾保持比例，不需拖曳或縮放。</p><button disabled={busy} onClick={() => patchLayer({ visible: !chosen.visible })}>{chosen.visible ? '隱藏圖框' : '顯示圖框'}</button><button className="danger" disabled={busy} onClick={remove}>移除圖框</button></> : chosen ? <><label>圖層名稱<input value={chosen.name} disabled={busy || chosen.locked} onChange={e => patchLayer({ name: e.target.value })}/></label>{chosen.locked && <p className="muted">此圖層已鎖定。<button onClick={() => patchLayer({ locked: false })} disabled={busy}>解鎖</button></p>}<fieldset disabled={busy || chosen.locked}>
+          {chosen?.kind === 'frame' ? <p className="muted">邊框的選擇與四角比例統一放在左側固定的「邊框」欄位。</p> : chosen ? <><label>圖層名稱<input value={chosen.name} disabled={busy || chosen.locked} onChange={e => patchLayer({ name: e.target.value })}/></label>{chosen.locked && <p className="muted">此圖層已鎖定。<button onClick={() => patchLayer({ locked: false })} disabled={busy}>解鎖</button></p>}<fieldset disabled={busy || chosen.locked}>
             {chosen.kind === 'text' && <p className="muted">文字內容、字體、粗斜體、顏色、字距與行距請在左側「調字」面板修改。</p>}
             {chosenIsPhoto ? <p className="photo-position-note">照片已固定直式滿版。放大後可直接上下左右拖曳取景；電腦請用左側放大滑桿，手機可在照片上雙指縮放。</p> : <div className="input-grid">{(['x', 'y', 'width', 'height', 'rotation'] as const).map((key, i) => <Numeric key={key} label={['X (mm)', 'Y (mm)', '寬 (mm)', '高 (mm)', '旋轉 (°)'][i]} value={chosen[key]} min={key === 'width' || key === 'height' ? 0.1 : -1000} max={1000} onChange={v => patchLayer(chosen.kind === 'image' && (key === 'width' || key === 'height') ? resizeLayerDimension(chosen, key, v, shiftHeld.current) : { [key]: v })}/>)}</div>}
             {chosen.kind !== 'image' && chosen.kind !== 'text' && <label>顏色<input type="color" value={chosen.fill} onChange={e => patchLayer({ fill: e.target.value })}/></label>}
