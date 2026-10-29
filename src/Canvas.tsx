@@ -250,9 +250,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     </div>
   </div>{bounded && <p className="selection-overview-note">控制框已限制在可見範圍；拖曳角落調整完整圖層，畫布縮放保持不變。</p>}</>;
 }
-export function Preview({ design, template, images }: Pick<Props, 'design' | 'template' | 'images'>) {
-  const ref = useRef<HTMLCanvasElement>(null), { w, h } = dimensions(design, template), scale = 2.2;
-  useEffect(() => { const ctx = ref.current?.getContext('2d'); if (ctx) { ctx.clearRect(0, 0, w * scale, h * scale); drawDesign(ctx, design, template, images, 'preview', scale, false); } }, [design, template, images, w, h]);
+export function Preview({ design, template, images, resolutionScale = 2.2 }: Pick<Props, 'design' | 'template' | 'images'> & { resolutionScale?: number }) {
+  const ref = useRef<HTMLCanvasElement>(null), { w, h } = dimensions(design, template), scale = resolutionScale;
+  useEffect(() => { const canvas = ref.current, ctx = canvas?.getContext('2d'); if (ctx && canvas) { canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale); ctx.clearRect(0, 0, canvas.width, canvas.height); drawDesign(ctx, design, template, images, 'preview', scale, false); } }, [design, template, images, w, h, scale]);
   return <canvas ref={ref} width={Math.round(w * scale)} height={Math.round(h * scale)} data-testid="product-preview" aria-label="同步成品預覽，不含編輯控制點"/>;
 }
 

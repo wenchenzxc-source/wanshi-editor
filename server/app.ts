@@ -85,6 +85,12 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (!token || !await store.get('sessions', hash(token))) return next(new HttpError(401, '請重新載入以建立私有工作階段'));
     res.locals.owner = hash(token); next();
   });
+  app.post('/api/feedback', async (req, res) => {
+    const input = z.object({ category: z.enum(['bug', 'usability', 'other']), message: z.string().trim().min(5).max(3000), designId: z.string().uuid().optional(), page: z.string().max(300).optional() }).parse(req.body);
+    const id = randomUUID();
+    await store.put('feedback', id, { id, ...input, owner: res.locals.owner, createdAt: new Date().toISOString() }, true);
+    res.status(201).json({ ok: true, id });
+  });
   const owned = async (id: string, owner: string) => {
     const d = await store.get<Draft>('drafts', idSchema.parse(id));
     if (!d || d.owner !== owner) throw new HttpError(404, '找不到設計'); return d;

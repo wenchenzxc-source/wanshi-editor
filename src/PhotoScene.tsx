@@ -52,7 +52,7 @@ export function apertureMatrix(corners: Point[], size: number) {
   const a=x1-x0+g*x1, b=x3-x0+h*x3, d=y1-y0+g*y1, e=y3-y0+h*y3;
   return `matrix3d(${[a,d,0,g/size,b,e,0,h/size,0,0,1,0,x0*size,y0*size,0,1].join(',')})`;
 }
-export function PhotoScene({ scene, design, template, images }: { scene: PhotoSceneId; design: Design; template: Template; images: Map<string, HTMLImageElement> }) {
+export function PhotoScene({ scene, design, template, images, expanded = false }: { scene: PhotoSceneId; design: Design; template: Template; images: Map<string, HTMLImageElement>; expanded?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(0), [failedSrc, setFailedSrc] = useState(''), [loadedSrc, setLoadedSrc] = useState('');
   const config = photoScenes[scene], photo = config[design.orientation], {w,h} = dimensions(design, template);
@@ -61,14 +61,15 @@ export function PhotoScene({ scene, design, template, images }: { scene: PhotoSc
   const apertureRatio = (distance(tl,tr)+distance(bl,br))/(distance(tl,bl)+distance(tr,br));
   const ratio = w/h;
   useEffect(() => { const node=container.current; if (!node) return; const observer=new ResizeObserver(([entry])=>setSize(entry.contentRect.width)); observer.observe(node); return ()=>observer.disconnect(); }, []);
-  return <div ref={container} className="photo-scene" data-orientation={design.orientation} aria-label={`${config.name}照片融合預覽`}>
+  const content = <div ref={container} className="photo-scene" data-orientation={design.orientation} aria-label={`${config.name}照片融合預覽`}>
     <img key={photo.src} src={photo.src} alt={`${config.name}${design.orientation === 'landscape' ? '橫式' : '直式'}原木相框場景`} onLoad={()=>{setLoadedSrc(photo.src);setFailedSrc('');}} onError={()=>setFailedSrc(photo.src)}/>
     {size > 0 && loadedSrc === photo.src && failedSrc !== photo.src && <div className="photo-art-plane" style={{transform:apertureMatrix(photo.corners,size)}}>
       <div className="photo-art-fit" style={{width:`${Math.min(1,ratio/apertureRatio)*100}%`,height:`${Math.min(1,apertureRatio/ratio)*100}%`}}>
-        <Preview design={design} template={template} images={images}/>
+        <Preview design={design} template={template} images={images} resolutionScale={expanded ? 4 : 2.2}/>
       </div>
       <div className="photo-aperture-light" aria-hidden="true"/>
     </div>}
     {failedSrc === photo.src && <p className="photo-load-error" role="alert">場景圖片載入失敗，請重新整理。</p>}
   </div>;
+  return content;
 }

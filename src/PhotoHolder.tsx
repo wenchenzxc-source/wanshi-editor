@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Preview } from './Canvas';
 import { dimensions, photoImageArea, type Design, type Template } from '../shared/model';
 import './photo-holder.css';
@@ -25,9 +26,9 @@ export function PhotoHolderScene({ design, template, images }: { design: Design;
   const options = design.photoHolder || defaultPhotoHolder, { w, h } = dimensions(design, template);
   // The frame is a proportionate illustration, never used as a manufacturing outline.
   const vw = w + 28, vh = h + 38;
-  const picture = () => <div className={`holder-scene ${options.base ? 'standing' : 'hanging'}`} data-face="front" data-base={String(options.base)} data-nfc={String(options.nfc)} style={{ aspectRatio: `${vw} / ${vh}` }}>
+  const picture = (expandedPreview = false) => <div className={`holder-scene ${options.base ? 'standing' : 'hanging'}`} data-face="front" data-base={String(options.base)} data-nfc={String(options.nfc)} style={{ aspectRatio: `${vw} / ${vh}` }}>
     <div className="holder-photo" style={{ left: `${14 / vw * 100}%`, top: `${18 / vh * 100}%`, width: `${w / vw * 100}%`, height: `${h / vh * 100}%` }}>
-      <Preview design={design} template={template} images={images}/>
+      <Preview design={design} template={template} images={images} resolutionScale={expandedPreview ? 5 : 3.5}/>
     </div>
     <svg className="holder-frame" viewBox={`0 0 ${vw} ${vh}`} aria-hidden="true">
       {!options.base && <path d={`M${vw / 2 - 5} 0 V14 H${vw / 2 + 5} V0`} fill="#242d2a"/>}
@@ -44,6 +45,6 @@ export function PhotoHolderScene({ design, template, images }: { design: Design;
     <p className="preview-note">{design.sizeId === 'instax-mini' ? '拍立得固定白邊' : '小相紙滿版'}・影像區 {photoImageArea(design, template)?.width} × {photoImageArea(design, template)?.height} mm</p>
     {picture()}<button className="photo-expand" onClick={() => setExpanded(true)}>⤢ 放大照片框預覽</button>
     <p className="preview-note">{options.base ? '含桌面底座・可立可掛' : '掛牌・未加購底座'}<br/>{options.nfc ? '背面加裝 NFC' : '無 NFC'}・{options.photoService === 'print' ? '加購照片列印' : '自備照片'}<br/>依實物造型繪製的示意，框體尺寸與遮擋範圍待確認。</p>
-    {expanded && <div className="modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal" role="dialog" aria-modal="true" aria-label="放大照片框預覽" onClick={e => e.stopPropagation()}><header>照片立／掛牌<button autoFocus onClick={() => setExpanded(false)}>關閉</button></header>{picture()}</section></div>}
+    {expanded && createPortal(<div className="modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal" role="dialog" aria-modal="true" aria-label="放大照片框預覽" onClick={e => e.stopPropagation()}><header>照片立／掛牌<button autoFocus onClick={() => setExpanded(false)}>關閉</button></header>{picture(true)}</section></div>, document.body)}
   </section>;
 }

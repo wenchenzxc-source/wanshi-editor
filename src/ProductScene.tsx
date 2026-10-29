@@ -1,6 +1,7 @@
 import { PhotoHolderScene } from './PhotoHolder';
 import { BadgeScene } from './BadgeScene';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Preview } from './Canvas';
 import { PhotoScene, photoScenes, type PhotoSceneId } from './PhotoScene';
 import { dimensions, type Design, type Template } from '../shared/model';
@@ -85,7 +86,7 @@ export function ProductScene({ design, template, images }: { design: Design; tem
     </div>
     </>}
     <p className="preview-note">{photo ? "AI 生成寫實場景 · 設計即時融合於相框" : "相框與場景為陳列示意"}<br/>製作檔僅輸出設計；底材光澤、透明度與 UV 均為視覺示意。</p>
-    {expanded && photo && <div className="modal-backdrop photo-modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal protected-preview" role="dialog" aria-modal="true" aria-label="放大情境預覽" onClick={e => e.stopPropagation()}><header><span>{active.name} · 寫實融合預覽</span><button autoFocus onClick={() => setExpanded(false)}>關閉</button></header><PhotoScene scene={scene as PhotoSceneId} design={design} template={template} images={images}/><p>相框隨商品方向切換，設計依原比例完整展示。</p></section></div>}
+    {expanded && photo && createPortal(<div className="modal-backdrop photo-modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal protected-preview" role="dialog" aria-modal="true" aria-label="放大情境預覽" onClick={e => e.stopPropagation()}><header><span>{active.name} · 寫實融合預覽</span><button autoFocus onClick={() => setExpanded(false)}>關閉</button></header><PhotoScene scene={scene as PhotoSceneId} design={design} template={template} images={images} expanded/><p>相框隨商品方向切換，設計依原比例完整展示。</p></section></div>, document.body)}
   </section>;
 }
 

@@ -35,9 +35,11 @@ export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, im
   // narrow, clean section of the source so no leaf or flower is stretched.
   const sx = sw * .46, sy = sh * .46;
   const short = Math.min(l.width, l.height);
-  const base = short * .38;
+  // A source strip of 0.4% determines the physical stroke weight. Extending
+  // the side changes only strip length, never this cross-axis thickness.
+  const edgeThickness = short * .004;
   const maxCorner = short * .48;
-  const size = (scale = 1) => Math.min(maxCorner, base * scale);
+  const size = (scale = 1) => Math.min(maxCorner, short * .38 * scale);
   const tl = size(l.frameTopLeftScale), tr = size(l.frameTopRightScale), br = size(l.frameBottomRightScale), bl = size(l.frameBottomLeftScale);
   const draw = (sourceX: number, sourceY: number, sourceW: number, sourceH: number, x: number, y: number, width: number, height: number) => {
     if (width > 0 && height > 0) ctx.drawImage(image, sourceX, sourceY, sourceW, sourceH, x, y, width, height);
@@ -58,19 +60,19 @@ export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, im
 
   // Full-length strips sit beneath the corners. This removes seams when corner
   // sizes differ and keeps edge thickness independent from all four controls.
-  draw(sampleX, 0, stripW, sy, 0, 0, l.width, base);
-  draw(sampleX, sh - sy, stripW, sy, 0, l.height - base, l.width, base);
-  draw(0, sampleY, sx, stripH, 0, 0, base, l.height);
-  draw(sw - sx, sampleY, sx, stripH, l.width - base, 0, base, l.height);
+  draw(sampleX, 0, stripW, stripH, 0, 0, l.width, edgeThickness);
+  draw(sampleX, sh - stripH, stripW, stripH, 0, l.height - edgeThickness, l.width, edgeThickness);
+  draw(0, sampleY, stripW, stripH, 0, 0, edgeThickness, l.height);
+  draw(sw - stripW, sampleY, stripW, stripH, l.width - edgeThickness, 0, edgeThickness, l.height);
 
   // Keep any star, bead or small flower at the centre of each side as a
   // fixed-size overlay. It is never included in the stretched line sample.
   const centreSourceW = sw * .12, centreSourceH = sh * .12;
-  const centreW = base * centreSourceW / sy, centreH = base * centreSourceH / sx;
-  draw((sw - centreSourceW) / 2, 0, centreSourceW, sy, (l.width - centreW) / 2, 0, centreW, base);
-  draw((sw - centreSourceW) / 2, sh - sy, centreSourceW, sy, (l.width - centreW) / 2, l.height - base, centreW, base);
-  draw(0, (sh - centreSourceH) / 2, sx, centreSourceH, 0, (l.height - centreH) / 2, base, centreH);
-  draw(sw - sx, (sh - centreSourceH) / 2, sx, centreSourceH, l.width - base, (l.height - centreH) / 2, base, centreH);
+  const centreW = edgeThickness * centreSourceW / stripH, centreH = edgeThickness * centreSourceH / stripW;
+  draw((sw - centreSourceW) / 2, 0, centreSourceW, stripH, (l.width - centreW) / 2, 0, centreW, edgeThickness);
+  draw((sw - centreSourceW) / 2, sh - stripH, centreSourceW, stripH, (l.width - centreW) / 2, l.height - edgeThickness, centreW, edgeThickness);
+  draw(0, (sh - centreSourceH) / 2, stripW, centreSourceH, 0, (l.height - centreH) / 2, edgeThickness, centreH);
+  draw(sw - stripW, (sh - centreSourceH) / 2, stripW, centreSourceH, l.width - edgeThickness, (l.height - centreH) / 2, edgeThickness, centreH);
 
   draw(0, 0, sx, sy, 0, 0, tl, tl);
   draw(sw - sx, 0, sx, sy, l.width - tr, 0, tr, tr);

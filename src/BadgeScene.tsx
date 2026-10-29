@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BadgeHardware } from './BadgeHardware';
 import { Preview } from './Canvas';
 import { dimensions, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template } from '../shared/model';
@@ -20,7 +21,7 @@ export function BadgeScene({ design, template, images }: { design: Design; templ
   const left = scene.x - (slot ? slot.x + slot.width / 2 : w / 2) * unit;
   const picture = () => <div className="badge-lifestyle" aria-label={`${scene.name}照片融合預覽`} data-orientation={design.orientation}>
     <img src={scene.image} alt={scene.name + '生活情境'} onError={() => setFailed(true)}/>
-    <div className="badge-live-art" style={{ left: `${left}%`, top: `${top}%`, width: `${w * unit}%`, height: `${h * unit}%`, borderRadius: `${badgeRadius(design, template) / w * 100}% / ${badgeRadius(design, template) / h * 100}%` }}><Preview design={design} template={template} images={images}/></div>
+    <div className="badge-live-art" style={{ left: `${left}%`, top: `${top}%`, width: `${w * unit}%`, height: `${h * unit}%`, borderRadius: `${badgeRadius(design, template) / w * 100}% / ${badgeRadius(design, template) / h * 100}%` }}><Preview design={design} template={template} images={images} resolutionScale={expanded ? 4 : 2.2}/></div>
     {slot && <BadgeHardware scene={scene.id} x={scene.x} y={scene.y} accessory={design.badgeAccessory} slotWidth={slot.width * unit} slotHeight={slot.height * unit}/>}
 
     {failed && <p className="photo-load-error">場景圖片載入失敗，請重新整理。</p>}
@@ -30,7 +31,7 @@ export function BadgeScene({ design, template, images }: { design: Design; templ
     <div className="badge-scene-buttons" role="group" aria-label="識別牌預覽場景">{scenes.map(s => <button key={s.id} aria-pressed={s.id === scene.id} onClick={() => setSceneId(s.id)}><img src={s.image} alt=""/>{s.name}</button>)}</div>
     {picture()}<button className="photo-expand" onClick={() => setExpanded(true)}>⤢ 放大情境預覽</button>
     <p className="preview-note">{!slot ? '不開孔' : badgeAccessories.find(a => a.id === design.badgeAccessory)?.name || '自訂長槽'}・圓角 R{badgeRadius(design, template)} mm<br/>AI 生成生活場景・圖稿與孔槽即時同步<br/>配件與光影為示意，實際大小以標示尺寸為準。{!slot ? <><br/>未開槽：配戴需另搭配夾具。</> : (!design.badgeAccessory || design.badgeAccessory === 'custom') && <><br/>自訂槽尚未指定配件，僅顯示孔槽。</>}</p>
-    {expanded && <div className="modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal" role="dialog" aria-modal="true" aria-label="放大識別牌預覽" onClick={e => e.stopPropagation()}><header>{scene.name}<button autoFocus onClick={() => setExpanded(false)}>關閉</button></header>{picture()}</section></div>}
+    {expanded && createPortal(<div className="modal-backdrop" onClick={() => setExpanded(false)}><section className="photo-modal" role="dialog" aria-modal="true" aria-label="放大識別牌預覽" onClick={e => e.stopPropagation()}><header>{scene.name}<button autoFocus onClick={() => setExpanded(false)}>關閉</button></header>{picture()}</section></div>, document.body)}
   </section>;
 }
 
