@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { fontIds } from './fonts';
+import { quoteStyleIds } from './quotes';
 
 const color = z.string().regex(/^#[0-9a-f]{6}$/i);
 export const materials = { clear: { name: '透明壓克力', color: '#ecf4f5' }, black: { name: '黑', color: '#171b1d' }, white: { name: '白', color: '#ffffff' }, iridescent: { name: '炫彩', color: '#d4e8f0' }, gold: { name: '金', color: '#c9a653' }, silver: { name: '銀', color: '#c1c7cd' }, roseGold: { name: '玫瑰金', color: '#d5a092' } };
@@ -17,6 +18,8 @@ export const layerSchema = z.object({
   frameTopRightScale: z.number().min(.45).max(1.5).optional(),
   frameBottomRightScale: z.number().min(.45).max(1.5).optional(),
   frameBottomLeftScale: z.number().min(.45).max(1.5).optional(),
+  cornerPosition: z.enum(['top-left', 'top-right', 'bottom-right', 'bottom-left']).optional(),
+  cornerArtworkId: z.string().max(80).optional(),
   x: z.number().min(-1000).max(1000), y: z.number().min(-1000).max(1000),
   width: z.number().min(0.1).max(1000), height: z.number().min(0.1).max(1000),
   aspectRatioLocked: z.boolean().optional(),
@@ -25,6 +28,7 @@ export const layerSchema = z.object({
   contrast: z.number().min(0.25).max(2).optional(),
   saturation: z.number().min(0).max(2).optional(),
   blurMm: z.number().min(0).max(10).optional(),
+  screenTear: z.number().min(0).max(100).optional(),
   cornerRadiusMm: z.number().min(0).max(500).optional(),
   cropX: z.number().min(0).max(1).optional(),
   cropY: z.number().min(0).max(1).optional(),
@@ -35,6 +39,7 @@ export const layerSchema = z.object({
   face: z.enum(['front', 'back']).optional(),
   fontSize: z.number().min(1).max(200).optional(),
   fontId: z.enum(fontIds).optional(),
+  quoteStyle: z.enum(quoteStyleIds).optional(),
   fontWeight: z.enum(['normal', 'bold']).optional(),
   fontStyle: z.enum(['normal', 'italic']).optional(),
   textDecoration: z.enum(['none', 'underline']).optional(),
@@ -48,6 +53,7 @@ export const layerSchema = z.object({
   const crop = [l.cropX, l.cropY, l.cropWidth, l.cropHeight];
   if (crop.some(v => v !== undefined) && crop.some(v => v === undefined)) ctx.addIssue({ code: 'custom', message: '裁切資料不完整' });
   if ((l.cropX ?? 0) + (l.cropWidth ?? 0) > 1.000001 || (l.cropY ?? 0) + (l.cropHeight ?? 0) > 1.000001) ctx.addIssue({ code: 'custom', message: '裁切範圍超出圖片' });
+  if (l.cornerPosition && (l.kind !== 'image' || !l.cornerArtworkId || l.cropWidth === undefined)) ctx.addIssue({ code: 'custom', message: '四角素材資料不完整' });
   if (l.kind === 'frame' && !l.frameId) ctx.addIssue({ code: 'custom', message: '圖框缺少樣式' });
 });
 export const designSchema = z.object({

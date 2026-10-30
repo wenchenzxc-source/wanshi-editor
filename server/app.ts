@@ -326,7 +326,6 @@ export async function createApp(dataDir: string, options: { templates?: Template
     const { artworkId } = z.object({ artworkId: z.string() }).parse(req.body);
     const artwork = artCatalog.find(a => a.id === artworkId);
     if (!artwork) throw new HttpError(404, '找不到素材');
-    if (artwork.category === '圖框' && !artwork.file) throw new HttpError(400, '請以套用圖框加入版面');
     const buffer = artwork.file ? await readFile(path.resolve('public/artwork', artwork.file)) : await sharp(Buffer.from(artwork.svg!)).resize(1600, 1600).png().toBuffer();
     const metadata = await sharp(buffer).metadata();
     const asset: PrivateAsset = { id: randomUUID(), designId: draft.design.id, owner: res.locals.owner, libraryArtworkId: artwork.id, originalName: `${artwork.name}.png`, mime: 'image/png', width: metadata.width!, height: metadata.height!, sha256: hash(buffer), variant: 'original' };

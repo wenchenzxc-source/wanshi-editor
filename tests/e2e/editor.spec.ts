@@ -168,15 +168,19 @@ test('bundled font selection changes live text and survives reload', async ({ pa
   await page.getByLabel('新增文字字體').selectOption('wenkai'); await page.getByRole('button', { name: '加入標題', exact: true }).click();
   await expect(page.getByLabel('文字字體', { exact: true })).toHaveValue('wenkai');
   const pixels = new Set<string>();
-  for (const id of ['sans', 'serif', 'wenkai', 'wenkai-light', 'wenkai-bold']) {
+  for (const id of ['sans', 'serif', 'wenkai', 'wenkai-light', 'wenkai-bold', 'mono', 'brush', 'hand-thin', 'iansui']) {
+    const previous = await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL());
     await page.getByLabel('文字字體', { exact: true }).selectOption(id);
     await expect.poll(async () => (await draft(page)).design.layers[0]?.fontId).toBe(id);
+    await expect.poll(async () => page.evaluate((name: string) => [...document.fonts].some(face => face.family.replace(/^['"]|['"]$/g, '') === name && face.status === 'loaded'), ({ sans: 'Wanshi Sans', serif: 'Wanshi Serif', wenkai: 'Wanshi WenKai', 'wenkai-light': 'Wanshi WenKai Light', 'wenkai-bold': 'Wanshi WenKai Bold', mono: 'Wanshi Mono', brush: 'Wanshi Brush', 'hand-thin': 'Wanshi Hand Thin', iansui: 'Wanshi Iansui' } as Record<string, string>)[id])).toBe(true);
+    if (id !== 'wenkai') await expect.poll(async () => page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL())).not.toBe(previous);
     pixels.add(await page.getByTestId('product-preview').evaluate((c: HTMLCanvasElement) => c.toDataURL()));
   }
-  expect(pixels.size).toBe(5);
+  expect(pixels.size).toBe(9);
   await page.reload(); await expect(page.locator('.save-state')).toHaveText('所有變更已儲存');
   await page.locator('.layer-select').filter({ hasText: '標題' }).click();
-  await expect(page.getByLabel('文字字體', { exact: true })).toHaveValue('wenkai-bold');
+  await expect(page.getByLabel('文字字體', { exact: true })).toHaveValue('iansui');
+  await page.screenshot({ path: 'test-results/fonts-selected.png', fullPage: true });
   await page.getByRole('button', { name: '文字', exact: true }).click();
   await page.screenshot({ path: 'test-results/fonts.png', fullPage: true });
 });
@@ -575,11 +579,11 @@ test('photo paper is portrait-only with full small-paper and fixed Instax image 
 test('redesigned studio adds categorized artwork and keeps confirmed items in cart', async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 1050 }); await page.goto('/');
   await page.getByRole('button', { name: '素材', exact: true }).click();
-  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '萬聖節', exact: true }).click();
+  await page.getByRole('combobox', { name: '素材分類' }).selectOption('萬聖節');
   await page.getByRole('button', { name: '角落蜘蛛網', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
   await page.getByRole('button', { name: '素材', exact: true }).click();
-  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '光影星芒', exact: true }).click();
+  await page.getByRole('combobox', { name: '素材分類' }).selectOption('光影星芒');
   await page.getByRole('button', { name: '暖光星芒', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(2);
   await page.screenshot({ path: 'test-results/studio-desktop.png', fullPage: true });
@@ -598,30 +602,31 @@ test('redesigned studio adds categorized artwork and keeps confirmed items in ca
   await cart.getByRole('button', { name: '移除', exact: true }).click(); await expect(cart.locator('.cart-item')).toHaveCount(0);
 });
 
-test('fitted frames follow the printable page while natural flowers remain editable', async ({ page }) => {
+test('corner artwork stays anchored while flowers remain editable across products', async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 1050 }); await page.goto('/');
   await page.getByRole('button', { name: '素材', exact: true }).click();
-  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '花瓣', exact: true }).click();
+  await page.getByRole('combobox', { name: '素材分類' }).selectOption('花瓣');
   await page.getByRole('button', { name: '淡櫻花枝', exact: true }).click();
   await expect.poll(async () => (await draft(page)).design.layers.length).toBe(1);
-  await page.getByRole('button', { name: '素材', exact: true }).click();
-  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '圖框', exact: true }).click();
-  await page.getByRole('button', { name: /蛛網相框/ }).click();
-  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.height).toBe(200);
-  let frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame');
-  expect(frame).toMatchObject({ x: 5, y: 5, width: 138, height: 200, locked: true, rotation: 0 });
-  await expect(page.getByText('圖框自動貼合版面', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '四角', exact: true }).click();
+  await page.getByRole('combobox', { name: '四角同款樣式' }).selectOption('halloween-frame');
+  await page.getByRole('button', { name: '套用四角' }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.filter((l: any) => l.cornerPosition).length).toBe(4);
+  let corner = (await draft(page)).design.layers.find((l: any) => l.cornerPosition === 'top-left');
+  expect(corner).toMatchObject({ kind: 'image', x: 5, y: 5, locked: true, aspectRatioLocked: true });
   await page.getByRole('button', { name: '切換為橫式', exact: true }).click();
-  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(200);
-  await page.reload(); expect((await draft(page)).design.layers.filter((l: any) => l.kind === 'frame')).toHaveLength(1);
-  await page.getByRole('button', { name: '素材', exact: true }).click();
-  await page.getByRole('group', { name: '素材分類' }).getByRole('button', { name: '圖框', exact: true }).click();
-  await page.getByRole('button', { name: /星光相框/ }).click();
-  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.frameId).toBe('starlight-frame');
-  expect((await draft(page)).design.layers).toHaveLength(2);
-  await page.screenshot({ path: 'test-results/natural-flowers-fitted-frame.png', fullPage: true });
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.cornerPosition === 'top-right')?.x).toBeGreaterThan(100);
+  await page.reload(); expect((await draft(page)).design.layers.filter((l: any) => l.cornerPosition)).toHaveLength(4);
+  await page.getByRole('button', { name: '四角', exact: true }).click();
+  await page.locator('.corner-card').nth(1).locator('summary').click();
+  await page.getByRole('button', { name: '右上角星光相框' }).click();
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.cornerPosition === 'top-right')?.cornerArtworkId).toBe('starlight-frame');
+  expect((await draft(page)).design.layers).toHaveLength(5);
   await page.getByRole('button', { name: '照片立／掛牌 小相紙／拍立得 mini・NFC 選配', exact: true }).click();
   await page.getByRole('group', { name: '照片規格' }).getByRole('button', { name: /拍立得/ }).click();
-  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.kind === 'frame')?.width).toBe(46);
-  frame = (await draft(page)).design.layers.find((l: any) => l.kind === 'frame'); expect(frame).toMatchObject({ x: 4, y: 7, width: 46, height: 62 });
+  await expect.poll(async () => (await draft(page)).design.layers.find((l: any) => l.cornerPosition === 'top-left')?.width).toBeLessThan(27);
+  corner = (await draft(page)).design.layers.find((l: any) => l.cornerPosition === 'top-left');
+  expect(corner).toMatchObject({ x: 0, y: 0, kind: 'image' });
+  expect(corner.width).toBeCloseTo(corner.height);
+  expect((await draft(page)).design.layers.filter((l: any) => l.cornerPosition)).toHaveLength(4);
 });

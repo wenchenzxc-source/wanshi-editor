@@ -1,0 +1,27 @@
+Source Han Mono TC Regular
+Repository: https://github.com/adobe-fonts/source-han-mono
+Commit: 4f24ea1fe8cfd63479ce64b318c78926d194e811
+File: SourceHanMonoTC-Regular.otf
+SHA-256: 89c98a5001395e69ca8bd9b92f3588682b2d91a320a7ab314b29c5fcf2fd2c73
+License: SourceHanMono-LICENSE.md
+
+Bakudai Regular
+Repository: https://github.com/max32002/bakudaifont
+Commit: f1eb195cfd665d95311f2fd720068ef5b1cf6115
+File: Bakudai-Regular.ttf
+SHA-256: 19fad0c294f3d3013bdee7471cd5e79015ee7a03acb2c47d9955937fc3dc8e4e
+License: Bakudai-OFL.txt
+
+ChenYuluoyan Thin 2.0
+Repository: https://github.com/Chenyu-otf/chenyuluoyan_thin
+Commit: 6e36815b0bec9f4f948298698d00b27a5f0b65c1
+File: ChenYuluoyan-2.0-Thin.ttf
+SHA-256: 1289e42a6d1ec995d0cb23aee89efc69fc95749fbd54a610057a3e992dc453db
+License: ChenYuluoyan-OFL.txt
+
+Iansui Regular
+Repository: https://github.com/google/fonts/tree/main/ofl/iansui
+Commit touching ofl/iansui: 6157dfaa640ca5738b4d1a7070fe389c3036d7fc
+File: Iansui-Regular.ttf
+SHA-256: 6e6340d80d618a42b48ade9370c34fa37a8210750c6fbc8efe65f23716538a2b
+License: Iansui-OFL.txt

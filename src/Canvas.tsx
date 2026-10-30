@@ -1,6 +1,7 @@
 import { cadSelect, layerBounds, type SelectionPoint } from '../shared/selection';
 import { eraseLayers } from '../shared/eraser';
 import { scatterPetals } from '../shared/petals';
+import { scatterSparkles } from '../shared/sparkles';
 import { clampCoverPosition, scaleLayerAtPoint, validLayerSize } from '../shared/transform';
 import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Group, Rect, Line, Shape, Transformer } from 'react-konva';
@@ -23,7 +24,7 @@ export function useImages(assets: Asset[]) {
   }, [assets]); // Loaded assets are immutable; only load when inventory changes.
   return { images, failed };
 }
-export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number };
+export type PaintTool = { mode: 'pen' | 'stamp' | 'petals' | 'scatter' | 'eraser'; flowerType?: 'sakura' | 'rose'; count?: number; color: string; size: number; opacity: number; assetId?: string; rotation: number; name?: string; remaining?: number };
 export type CropBox = { x: number; y: number; width: number; height: number };
 type Props = { photoAssetIds?: Set<string>; cropBox?: CropBox | null; setCropBox?: (box: CropBox) => void; liveMany: (layers: DesignLayer[] | null) => void; marquee?: boolean; contained?: boolean; selectedIds: string[]; selectMany: (ids: string[]) => void; replaceLayers: (layers: DesignLayer[]) => void; createBatch: (layers: DesignLayer[]) => void; paint?: PaintTool; create: (layer: DesignLayer) => void; design: Design; template: Template; images: Map<string, HTMLImageElement>; selected: string | null; select: (id: string | null) => void; commit: (layer: DesignLayer) => void; live: (layer: DesignLayer | null) => void; zoom: number; guides: boolean; disabled: boolean };
 type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
@@ -33,12 +34,25 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
+  const sprinkled = useRef<DesignLayer[]>([]), lastSprinkle = useRef<SelectionPoint | null>(null);
+  const [sprinklePreview, setSprinklePreview] = useState<DesignLayer[]>([]);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const marqueeRef = useRef<Marquee | null>(null), groupDrag = useRef<GroupDrag | null>(null), pinchZoom = useRef<PinchZoom | null>(null), shrinkFeedbackAt = useRef(new Map<string, number>());
   function stroke(points: number[]) {
     const xs = points.filter((_, i) => i % 2 === 0), ys = points.filter((_, i) => i % 2 === 1), r = paint!.size / 2;
     const x = Math.min(...xs) - r, y = Math.min(...ys) - r, width = Math.max(...xs) - x + r, height = Math.max(...ys) - y + r;
     return newLayer('stroke', { name: '自由筆畫', x, y, width, height, fill: paint!.color, opacity: paint!.opacity, brushRatio: paint!.size / Math.min(width, height), points: points.map((n, i) => (n - (i % 2 ? y : x)) / (i % 2 ? height : width)) });
+  }
+  function sprinkleAt(x: number, y: number) {
+    if (!paint?.assetId) return;
+    const room = Math.min(36, paint.remaining ?? 36) - sprinkled.current.length;
+    if (room <= 0) return;
+    const layers = scatterSparkles({ x, y, spreadW: paint.size * 2.4, spreadH: paint.size * 2.4,
+      size: paint.size, count: Math.min(room, paint.count || 3), pageW: w, pageH: h,
+      opacity: paint.opacity, assetId: paint.assetId, name: paint.name || '星光筆刷' });
+    sprinkled.current = [...sprinkled.current, ...layers];
+    lastSprinkle.current = { x, y };
+    setSprinklePreview(sprinkled.current);
   }
   const photoArea = photoImageArea(design, template);
   const proxyRef = useRef<Konva.Rect>(null);
@@ -196,6 +210,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
               onTransformEnd={() => { const node = nodes.current.get(l.id)!; const next = updated(l, node); node.scale({ x: 1, y: 1 }); commit(next); live(null); }}
             />)}
             {ink && <Shape x={ink.x} y={ink.y} listening={false} sceneFunc={ctx => drawLayer(ctx._context, ink)}/>}
+            {sprinklePreview.map(layer => <Shape key={layer.id} x={layer.x} y={layer.y} rotation={layer.rotation} listening={false} sceneFunc={ctx => drawLayer(ctx._context, layer, images.get(layer.assetId || ''), 'preview', scale)}/>)}
             <Shape listening={false} sceneFunc={ctx => drawPhotoBorder(ctx._context, design, template)}/>
             {cropBox && current?.kind === 'image' && <Group x={current.x} y={current.y} rotation={current.rotation}>
               <Rect x={0} y={0} width={current.width} height={cropBox.y} fill="#10201c99" listening={false}/>
@@ -237,16 +252,24 @@ export function EditorCanvas({ design, template, images, selected, select, commi
         if (x < 0 || y < 0 || x > w || y > h) return;
         select(null); e.currentTarget.setPointerCapture(e.pointerId);
         if (paint.mode === 'petals') { createBatch(scatterPetals(x, y, Math.min(w, paint.size * 6), Math.min(h, paint.size * 7), paint.size, paint.count || 6, paint.flowerType || 'sakura', paint.opacity, w, h)); return; }
+        if (paint.mode === 'scatter') { sprinkled.current = []; lastSprinkle.current = null; sprinkleAt(x, y); return; }
         if (paint.mode === 'stamp') { if (paint.assetId) create(newLayer('image', { name: '花瓣印章', assetId: paint.assetId, x: x - paint.size / 2, y: y - paint.size / 2, width: paint.size, height: paint.size, rotation: paint.rotation, opacity: paint.opacity })); return; }
         drawing.current = [x, y, x, y]; if (paint.mode === 'eraser') setErased(eraseLayers(design.layers, drawing.current, paint.size)); else setInk(stroke(drawing.current));
       }}
       onPointerMove={e => {
+        if (paint.mode === 'scatter') {
+          if (!sprinkled.current.length) return;
+          const rect = e.currentTarget.getBoundingClientRect(), x = Math.max(0, Math.min(w, (e.clientX - rect.left) / scale - pad - b)), y = Math.max(0, Math.min(h, (e.clientY - rect.top) / scale - pad - b));
+          const last = lastSprinkle.current;
+          if (last && Math.hypot(x - last.x, y - last.y) >= Math.max(2, paint.size * .8)) sprinkleAt(x, y);
+          return;
+        }
         if (!drawing.current.length || drawing.current.length >= 12000) return;
         const rect = e.currentTarget.getBoundingClientRect(), x = Math.max(0, Math.min(w, (e.clientX - rect.left) / scale - pad - b)), y = Math.max(0, Math.min(h, (e.clientY - rect.top) / scale - pad - b));
         drawing.current.push(x, y); if (paint.mode === 'eraser') setErased(eraseLayers(design.layers, drawing.current, paint.size)); else setInk(stroke(drawing.current));
       }}
-      onPointerUp={() => { if (drawing.current.length) { if (paint.mode === 'eraser') replaceLayers(eraseLayers(design.layers, drawing.current, paint.size)); else create(stroke(drawing.current)); } drawing.current = []; setInk(null); setErased(null); }}
-      onPointerCancel={() => { drawing.current = []; setInk(null); setErased(null); }} />}
+      onPointerUp={() => { if (paint.mode === 'scatter') { if (sprinkled.current.length) createBatch(sprinkled.current); sprinkled.current = []; lastSprinkle.current = null; setSprinklePreview([]); return; } if (drawing.current.length) { if (paint.mode === 'eraser') replaceLayers(eraseLayers(design.layers, drawing.current, paint.size)); else create(stroke(drawing.current)); } drawing.current = []; setInk(null); setErased(null); }}
+      onPointerCancel={() => { drawing.current = []; sprinkled.current = []; lastSprinkle.current = null; setSprinklePreview([]); setInk(null); setErased(null); }} />}
     </div>
   </div>{bounded && <p className="selection-overview-note">控制框已限制在可見範圍；拖曳角落調整完整圖層，畫布縮放保持不變。</p>}</>;
 }

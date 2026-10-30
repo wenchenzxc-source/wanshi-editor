@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createCanvas } from '@napi-rs/canvas';
 import { drawLayer, imageCropRect } from '../shared/draw';
 import { layerSchema, newLayer } from '../shared/model';
+import { screenTearBands } from '../shared/screenTear';
 
 test('image adjustments survive validation and affect rendered pixels', () => {
   const source = createCanvas(12, 12), sourceContext = source.getContext('2d');
@@ -51,4 +52,39 @@ test('image corner radius survives validation and clips the rendered corners', (
   assert.equal(corner[3], 0);
   assert.ok(center[0] > 220 && center[3] > 240);
   assert.throws(() => layerSchema.parse({ ...base, cornerRadiusMm: -1 }));
+});
+
+test('screen tear displaces image bands consistently in preview and production', () => {
+  const source = createCanvas(120, 80), sourceContext = source.getContext('2d');
+  for (let x = 0; x < 120; x += 6) {
+    sourceContext.fillStyle = x % 12 ? '#254f71' : '#f3b983';
+    sourceContext.fillRect(x, 0, 6, 80);
+  }
+  const base = newLayer('image', { assetId: crypto.randomUUID(), width: 120, height: 80 });
+  const torn = layerSchema.parse({ ...base, screenTear: 75 });
+  const render = (layer: typeof torn, mode: 'preview' | 'production') => {
+    const output = createCanvas(120, 80);
+    drawLayer(output.getContext('2d') as unknown as CanvasRenderingContext2D, layer, source as unknown as CanvasImageSource, mode);
+    return output.toBuffer('image/png');
+  };
+  assert.ok(screenTearBands(torn.id, 120, 80, 75).length >= 5);
+  assert.deepEqual(screenTearBands(torn.id, 120, 80, 75), screenTearBands(torn.id, 120, 80, 75));
+  assert.notDeepEqual(render(torn, 'production'), render(base, 'production'));
+  assert.deepEqual(render(torn, 'preview'), render(torn, 'production'));
+  assert.deepEqual(render(layerSchema.parse(JSON.parse(JSON.stringify(torn))), 'production'), render(torn, 'production'));
+  assert.deepEqual(screenTearBands(torn.id, 120, 80, 0), []);
+  assert.throws(() => layerSchema.parse({ ...base, screenTear: 101 }));
+});
+
+test('screen tear stays inside a cropped image with rounded corners', () => {
+  const source = createCanvas(40, 20), sourceContext = source.getContext('2d');
+  sourceContext.fillStyle = '#ff0000'; sourceContext.fillRect(0, 0, 20, 20);
+  sourceContext.fillStyle = '#0000ff'; sourceContext.fillRect(20, 0, 20, 20);
+  const layer = layerSchema.parse({ ...newLayer('image', { assetId: crypto.randomUUID(), width: 40, height: 30 }),
+    cropX: .5, cropY: 0, cropWidth: .5, cropHeight: 1, cornerRadiusMm: 8, screenTear: 90 });
+  const output = createCanvas(40, 30), ctx = output.getContext('2d');
+  drawLayer(ctx as unknown as CanvasRenderingContext2D, layer, source as unknown as CanvasImageSource, 'production');
+  assert.equal(ctx.getImageData(0, 0, 1, 1).data[3], 0);
+  const blue = ctx.getImageData(20, 1, 1, 1).data;
+  assert.ok(blue[2] > 230 && blue[0] < 30);
 });

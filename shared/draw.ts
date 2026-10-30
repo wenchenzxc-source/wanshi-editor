@@ -1,4 +1,5 @@
 import { drawFloatingPetal } from './petals';
+import { screenTearBands } from './screenTear';
 import { dimensions, materials, slotGeometry, badgeRadius, photoImageArea, type Design, type DesignLayer, type Template } from './model';
 export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number, clearOpacity = 0.16) {
   ctx.save();
@@ -23,6 +24,30 @@ export function imageCropRect(l: DesignLayer, image: CanvasImageSource) {
   const height = Math.min(1 - (l.cropY ?? 0), l.cropHeight) * sourceHeight;
   return { x: (l.cropX ?? 0) * sourceWidth, y: (l.cropY ?? 0) * sourceHeight, width, height };
 }
+function drawCornerImage(ctx: CanvasRenderingContext2D, image: CanvasImageSource, crop: NonNullable<ReturnType<typeof imageCropRect>>, layer: DesignLayer) {
+  const position = layer.cornerPosition!;
+  const segments = (fadeAtStart: boolean) => {
+    const fade = .3, steps = 8;
+    const parts: { from: number; to: number; opacity: number }[] = [];
+    if (!fadeAtStart) parts.push({ from: 0, to: 1 - fade, opacity: 1 });
+    for (let i = 0; i < steps; i++) {
+      const from = fadeAtStart ? i * fade / steps : 1 - fade + i * fade / steps;
+      const to = fadeAtStart ? (i + 1) * fade / steps : 1 - fade + (i + 1) * fade / steps;
+      const progress = (i + .5) / steps;
+      const value = fadeAtStart ? progress : 1 - progress;
+      parts.push({ from, to, opacity: value * value * (3 - 2 * value) });
+    }
+    if (fadeAtStart) parts.push({ from: fade, to: 1, opacity: 1 });
+    return parts;
+  };
+  const xs = segments(position.endsWith('right'));
+  const ys = segments(position.startsWith('bottom'));
+  for (const x of xs) for (const y of ys) {
+    ctx.globalAlpha = layer.opacity * x.opacity * y.opacity;
+    ctx.drawImage(image, crop.x + x.from * crop.width, crop.y + y.from * crop.height, (x.to - x.from) * crop.width, (y.to - y.from) * crop.height, x.from * layer.width, y.from * layer.height, (x.to - x.from) * layer.width, (y.to - y.from) * layer.height);
+  }
+  ctx.globalAlpha = layer.opacity;
+}
 export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Template, mode: RenderMode = 'preview') {
   const area = photoImageArea(d, t); if (!area) return;
   const { w, h } = dimensions(d, t);
@@ -32,6 +57,7 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
   ctx.restore();
 }
 import { getFont } from './fonts';
+import { drawQuoteFrame, quoteInsets } from './quotes';
 import { drawFrame, drawFrameImage } from './frame';
 export const FONT = 'Wanshi Sans';
 export function textFont(layer: DesignLayer, size = layer.fontSize || 10) {
@@ -82,29 +108,55 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: DesignLayer, image?:
     const cornerRadius = Math.max(0, Math.min(l.cornerRadiusMm ?? 0, l.width / 2, l.height / 2));
     ctx.beginPath(); ctx.roundRect(0, 0, l.width, l.height, cornerRadius); ctx.clip();
     const crop = imageCropRect(l, image);
-    if (crop) ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, l.width, l.height);
+    if (crop && l.cornerPosition) drawCornerImage(ctx, image, crop, l);
+    else if (crop) ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, l.width, l.height);
     else ctx.drawImage(image, 0, 0, l.width, l.height);
+    if (l.screenTear && !l.cornerPosition) {
+      const source = image as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+      const sourceWidth = Number(source.naturalWidth || source.width || 0);
+      const sourceHeight = Number(source.naturalHeight || source.height || 0);
+      const area = crop || { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
+      if (area.width && area.height) for (const band of screenTearBands(l.id, l.width, l.height, l.screenTear)) {
+        const sourceY = area.y + band.y / l.height * area.height;
+        const sourceBandHeight = band.height / l.height * area.height;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(0, band.y, l.width, band.height); ctx.clip();
+        ctx.drawImage(image, area.x, sourceY, area.width, sourceBandHeight, band.offset, band.y, l.width, band.height);
+        ctx.restore();
+        ctx.save(); ctx.filter = 'none';
+        ctx.globalAlpha = l.opacity * Math.min(.45, .12 + l.screenTear / 350);
+        ctx.fillStyle = band.offset > 0 ? '#9be5e4' : '#ed9ba9';
+        ctx.fillRect(0, band.y, l.width, Math.max(.12, Math.min(band.height * .08, .65)));
+        ctx.restore();
+      }
+    }
   }
   else if (l.kind === 'text') {
     const size = l.fontSize || 10;
     const lineHeight = size * (l.lineHeight ?? 1.3), letterSpacing = l.letterSpacing ?? 0;
+    const inset = l.quoteStyle ? quoteInsets(l.quoteStyle, l.width, l.height) : { left: 0, right: 0, top: 0, bottom: 0 };
+    const textWidth = Math.max(.1, l.width - inset.left - inset.right);
+    const textHeight = Math.max(.1, l.height - inset.top - inset.bottom);
+    if (l.quoteStyle) drawQuoteFrame(ctx, l.quoteStyle, l.width, l.height);
+    ctx.fillStyle = l.fill;
     ctx.font = textFont(l, size); ctx.textBaseline = 'top';
-    ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.clip();
+    ctx.beginPath(); ctx.rect(inset.left, inset.top, textWidth, textHeight); ctx.clip();
     const measure = (text: string) => ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * letterSpacing;
     const drawLine = (text: string, y: number) => {
       const lineWidth = measure(text);
-      let x = l.textAlign === 'center' ? (l.width - lineWidth) / 2 : l.textAlign === 'right' ? l.width - lineWidth : 0;
+      let x = inset.left + (l.textAlign === 'center' ? (textWidth - lineWidth) / 2 : l.textAlign === 'right' ? textWidth - lineWidth : 0);
+      const start = x;
       if (letterSpacing && text) {
         for (const char of Array.from(text)) { ctx.fillText(char, x, y); x += ctx.measureText(char).width + letterSpacing; }
       } else ctx.fillText(text, x, y);
       if (l.textDecoration === 'underline' && text) {
-        const start = l.textAlign === 'center' ? (l.width - lineWidth) / 2 : l.textAlign === 'right' ? l.width - lineWidth : 0;
         ctx.save(); ctx.strokeStyle = mode === 'mask' ? '#ffffff' : l.fill; ctx.lineWidth = Math.max(.18, size * .06);
         ctx.beginPath(); ctx.moveTo(start, y + size * 1.08); ctx.lineTo(start + lineWidth, y + size * 1.08); ctx.stroke(); ctx.restore();
       }
     };
-    let y = 0;
-    for (const line of wrapTextLines(l.text || '', l.width, measure)) { drawLine(line, y); y += lineHeight; }
+    const lines = wrapTextLines(l.text || '', textWidth, measure);
+    let y = l.quoteStyle ? inset.top + Math.max(0, (textHeight - lines.length * lineHeight) / 2) : 0;
+    for (const line of lines) { drawLine(line, y); y += lineHeight; }
   } else if (l.kind !== 'image') {
     ctx.scale(l.width, l.height); ctx.beginPath();
     if (l.shape === 'circle') ctx.ellipse(0.5, 0.5, 0.5, 0.5, 0, 0, Math.PI * 2);

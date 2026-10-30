@@ -1,8 +1,10 @@
 import { scatterPetals } from '../shared/petals';
+import { scatterSparkles } from '../shared/sparkles';
+import { quoteInsets, quotePresets, quoteStyles, type QuoteStyle } from '../shared/quotes';
 import { clampCoverPosition, remapImagesToCanvas, resizeLayerDimension } from '../shared/transform';
 import { removeEmptyStrokes } from '../shared/eraser';
 import { PrintStackPicker } from './PrintStackPicker';
-import { fonts, getFont, type FontId } from '../shared/fonts';
+import { fonts, fontGroups, getFont, type FontId } from '../shared/fonts';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, ApiError, uploadAssets } from './api';
@@ -13,17 +15,28 @@ import { PhotoHolderOptions, defaultPhotoHolder } from './PhotoHolder';
 import { dimensions, fitFrames, emptyDesign, newLayer, materials, supportsDuplex, withPrintStack, stackLabel, resolveTemplate, badgeAccessories, badgeRadius, photoImageArea, type Material, type Asset, type Design, type DesignLayer, type Template, type VersionInfo } from '../shared/model';
 import './styles.css';
 import './studio.css';
-import { ArtLibrary, FrameLibrary } from './ArtLibrary';
+import { ArtLibrary } from './ArtLibrary';
+import { isFontLoaded, loadFont } from './fontLoader';
+import { CornerPanel, cornerCrop, cornerPositions, type CornerPosition } from './CornerPanel';
 import { artCatalog } from '../shared/artwork';
 import { textFont, wrapTextLines } from '../shared/draw';
 import { Cart, type CartItem } from './Cart';
-import { assetUrl, publicUrl, staticDemo } from './urls';
+import { assetUrl, publicUrl, staticDemo, svgDataUrl } from './urls';
 import { effectiveImagePpi, imageQualityIssues, MIN_IMAGE_PPI, TARGET_PRINTER_DPI } from '../shared/print-quality';
 import { StudioApp } from './Studio';
 
 type Loaded = { design: Design; revision: number; assets: Asset[]; versions: VersionInfo[] };
 type Config = { templates: Template[]; backgroundRemoval: boolean; directUpload?: boolean };
 type Saved = { id: string; name: string; updatedAt: string };
+function placeCorner(layer: DesignLayer, width: number, height: number, safe: number): DesignLayer {
+  const size = Math.max(5, Math.min(layer.width, Math.min(width, height) / 2 - safe));
+  return { ...layer, width: size, height: size,
+    x: layer.cornerPosition?.endsWith('left') ? safe : width - safe - size,
+    y: layer.cornerPosition?.startsWith('top') ? safe : height - safe - size };
+}
+function cornerCropBox(position: CornerPosition) {
+  return { cropX: position.endsWith('left') ? 0 : 1 - cornerCrop, cropY: position.startsWith('top') ? 0 : 1 - cornerCrop, cropWidth: cornerCrop, cropHeight: cornerCrop };
+}
 function fitPhotoImageLayer(layer: DesignLayer, asset: Pick<Asset, 'width' | 'height'>, design: Design, template: Template, reset = false) {
   const area = photoImageArea(design, template);
   if (!area || !asset.width || !asset.height) return layer;
@@ -61,8 +74,9 @@ function App() {
   }, []);
   const [cart, setCart] = useState<CartItem[]>([]), [showCart, setShowCart] = useState(false);
   const confirmationCache = useRef<{ revision: number; designId: string; version: VersionInfo } | null>(null);
-  const [paintMode, setPaintMode] = useState<'select' | 'pen' | 'stamp' | 'petals' | 'eraser'>('select'), [paintColor, setPaintColor] = useState('#b87987'), [paintSize, setPaintSize] = useState(2), [paintOpacity, setPaintOpacity] = useState(1), [stampAsset, setStampAsset] = useState<string>(), [stampRotation, setStampRotation] = useState(0);
+  const [paintMode, setPaintMode] = useState<'select' | 'pen' | 'stamp' | 'petals' | 'scatter' | 'eraser'>('select'), [paintColor, setPaintColor] = useState('#b87987'), [paintSize, setPaintSize] = useState(2), [paintOpacity, setPaintOpacity] = useState(1), [stampAsset, setStampAsset] = useState<string>(), [stampRotation, setStampRotation] = useState(0);
   const [flowerType, setFlowerType] = useState<'sakura' | 'rose'>('sakura'), [petalCount, setPetalCount] = useState(6);
+  const [sprinkleDensity, setSprinkleDensity] = useState(3);
   const [transientMany, setTransientMany] = useState<DesignLayer[] | null>(null);
   const [cropBox, setCropBox] = useState<CropBox | null>(null);
   const [marquee, setMarquee] = useState(false), [contained, setContained] = useState(false), [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -82,13 +96,14 @@ function App() {
   const faceLayers = design?.layers.filter(l => (l.face || 'front') === face) || [];
   const canvasDesign = design && { ...design, layers: faceLayers };
   const chosen = faceLayers.find(l => l.id === selected);
-  const activeFrame = faceLayers.find(l => l.kind === 'frame');
   function setSelected(id: string | null) {
     if (id !== selected) setCropBox(null);
     setSelectedState(id);
     const next = id ? designRef.current?.layers.find(layer => layer.id === id) : undefined;
     const editingTab = tab === 'image' || tab === 'text-edit';
-    if (next?.kind === 'image') {
+    if (next?.cornerPosition) {
+      setTab('corners'); setPaintMode('select');
+    } else if (next?.kind === 'image') {
       if (!editingTab) previousTool.current = tab;
       setTab('image'); setPaintMode('select');
       requestAnimationFrame(() => document.querySelector('.asset-panel')?.scrollTo({ top: 0 }));
@@ -97,8 +112,7 @@ function App() {
       setTab('text-edit'); setPaintMode('select');
       requestAnimationFrame(() => document.querySelector('.asset-panel')?.scrollTo({ top: 0 }));
     } else if (next?.kind === 'frame') {
-      setTab('frames'); setPaintMode('select');
-      requestAnimationFrame(() => document.querySelector('.asset-panel')?.scrollTo({ top: 0 }));
+      setTab('corners'); setPaintMode('select');
     } else if (editingTab) setTab(previousTool.current);
   }
   const fitZoom = () => {
@@ -135,12 +149,28 @@ function App() {
     if (boot.current) return; boot.current = true;
     (async () => {
       await api('/session', { method: 'POST' }); const c = await api<Config>('/config'); setConfig(c); setCart(await api<CartItem[]>('/cart'));
-      await Promise.all(fonts.map(async f => { const font = new FontFace(f.family, `url(${publicUrl(`fonts/${f.file}`)})`, { weight: f.id === 'sans' || f.id === 'serif' ? '100 900' : '400' }); await font.load(); document.fonts.add(font); })); setReadyFont(true);
+      await loadFont('sans'); setReadyFont(true);
       const id = localStorage.getItem('wanshi:last-design');
       if (id) { try { applyLoaded(await api<Loaded>(`/designs/${id}`), c.templates); return; } catch (e) { if (!(e instanceof ApiError && e.status === 404)) throw e; } }
       applyLoaded(await api<Loaded>('/designs', { method: 'POST', body: JSON.stringify(emptyDesign(c.templates[0])) }), c.templates);
     })().catch(report);
   }, []);
+  const usedFontIds = design?.layers.filter(layer => layer.kind === 'text').map(layer => getFont(layer.fontId).id).join(',') || '';
+  useEffect(() => {
+    const ids = new Set<FontId>([fontChoice]);
+    for (const id of usedFontIds.split(',')) if (id) ids.add(id as FontId);
+    const missing = [...ids].filter(id => !isFontLoaded(id));
+    if (!missing.length) return;
+    let active = true;
+    Promise.allSettled(missing.map(loadFont)).then(results => {
+      if (!active) return;
+      for (const result of results) if (result.status === 'rejected') report(result.reason);
+      if (results.some(result => result.status === 'fulfilled')) {
+        setDesign(current => current && { ...current });
+      }
+    });
+    return () => { active = false; };
+  }, [usedFontIds, fontChoice]);
   useEffect(() => { if (!design || busy) return; const timer = setTimeout(() => { save().catch(report); }, 900); return () => clearTimeout(timer); }, [design, busy, save]);
   useEffect(() => { const leave = (e: BeforeUnloadEvent) => { if (JSON.stringify(designRef.current) !== lastSaved.current) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', leave); return () => window.removeEventListener('beforeunload', leave); }, []);
   function change(next: Design) {
@@ -154,7 +184,11 @@ function App() {
       if (before.w !== after.w || before.h !== after.h || old.templateId !== next.templateId) next = { ...next, layers: remapImagesToCanvas(next.layers, before, after, target.safeMm) };
     }
     if (target?.presentation === 'photo-holder') next = normalizePhotoDesign(next, target, assets);
-    if (target) next = fitFrames(next, target);
+    if (target) {
+      next = fitFrames(next, target);
+      const area = dimensions(next, target);
+      next = { ...next, layers: next.layers.map(layer => layer.cornerPosition ? placeCorner(layer, area.w, area.h, target.safeMm) : layer) };
+    }
     if (next.slot?.enabled && target?.presentation === 'acrylic-badge') {
       const size = dimensions(next, target);
       next = { ...next, slot: { ...next.slot, widthMm: Math.min(next.slot.widthMm, Math.floor(size.w - target.safeMm * 2)), heightMm: Math.min(next.slot.heightMm, Math.floor(size.h - 5 - target.safeMm)) } };
@@ -188,22 +222,105 @@ function App() {
   }); }
   async function addArtwork(artworkId: string) { await run(async () => {
     const entry = artCatalog.find(a => a.id === artworkId);
-    if (entry?.category === '圖框') {
-      let frameAsset = entry.file ? assets.find(a => !a.deletedAt && a.libraryArtworkId === entry.id) : undefined;
-      if (entry.file && !frameAsset) {
-        frameAsset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
-        setAssets(a => [...a, frameAsset!]);
-      }
-      const currentFrame = designRef.current!.layers.find(l => l.kind === 'frame');
-      const frame = newLayer('frame', { name: entry.name, frameId: artworkId as NonNullable<DesignLayer['frameId']>, ...(frameAsset ? { assetId: frameAsset.id } : {}), locked: true, visible: currentFrame?.visible ?? true, frameTopLeftScale: currentFrame?.frameTopLeftScale ?? 1, frameTopRightScale: currentFrame?.frameTopRightScale ?? 1, frameBottomRightScale: currentFrame?.frameBottomRightScale ?? 1, frameBottomLeftScale: currentFrame?.frameBottomLeftScale ?? 1 });
-      const names = artCatalog.filter(a => a.category === '圖框').map(a => a.name as string);
-      change({ ...designRef.current!, layers: [...designRef.current!.layers.filter(l => l.kind !== 'frame' && !(l.kind === 'image' && names.includes(l.name) && assets.some(a => a.id === l.assetId && names.some(n => a.originalName === `${n}.png`)))), frame] });
-      setSelected(frame.id); await save(designRef.current); return;
+    if (!entry) throw new Error('找不到素材');
+    let asset = assets.find(a => !a.deletedAt && a.libraryArtworkId === artworkId);
+    if (!asset) {
+      asset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
+      setAssets(a => [...a, asset!]);
     }
-    const asset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
-    setAssets(a => [...a, asset]); const size = dimensions(design!, template!); const edge = Math.min(size.w, size.h) * .65;
-    add(newLayer('image', { name: asset.originalName.replace('.png', ''), assetId: asset.id, x: (size.w - edge) / 2, y: (size.h - edge) / 2, width: edge, height: edge })); await save(designRef.current);
+    const size = dimensions(design!, template!);
+    const edge = entry.category === '手帳貼紙' ? Math.min(entry.tags?.includes('圖釘') ? 16 : 30, Math.min(size.w, size.h) * .3) : Math.min(size.w, size.h) * .65;
+    const layer = newLayer('image', { name: entry.name, assetId: asset.id, x: (size.w - edge) / 2, y: (size.h - edge) / 2, width: edge, height: edge, aspectRatioLocked: true, face });
+    add(layer);
+    await save(designRef.current);
   }); }
+  function addQuotePreset(presetId: string) {
+    const preset = quotePresets.find(item => item.id === presetId);
+    if (!preset || !design || !template) return;
+    const style = quoteStyles[preset.style], { w, h } = dimensions(design, template);
+    const scale = Math.min(1, (w - template.safeMm * 2) / style.width, (h - template.safeMm * 2) / style.height);
+    const width = style.width * scale, height = style.height * scale;
+    add(newLayer('text', { name: preset.name, quoteStyle: preset.style, text: preset.text,
+      width, height, x: (w - width) / 2, y: (h - height) / 2,
+      fontSize: Math.max(1, style.fontSize * scale), fill: style.textColor,
+      fontId: preset.fontId || 'sans', fontWeight: (preset.fontId || preset.style === 'quote') ? 'normal' : 'bold', textAlign: 'center', face }));
+  }
+  async function activateSprinkle(artworkId: 'star-glow' | 'bokeh') { await run(async () => {
+    let asset = assets.find(item => !item.deletedAt && item.libraryArtworkId === artworkId);
+    if (!asset) {
+      asset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
+      setAssets(current => [...current, asset!]);
+    }
+    setStampAsset(asset.id);
+    setPaintMode('scatter');
+    setPaintSize(8);
+    setSelected(null);
+  }); }
+  function fillSparkles() {
+    if (!design || !template || !stampAsset) return;
+    const room = 150 - design.layers.length;
+    if (room < 1) { setError('圖層已達上限，請先移除部分圖層。'); return; }
+    const { w, h } = dimensions(design, template);
+    const name = assets.find(item => item.id === stampAsset)?.libraryArtworkId === 'bokeh' ? '柔光光點筆刷' : '星光筆刷';
+    change({ ...design, layers: [...design.layers, ...scatterSparkles({ x: w / 2, y: h / 2, spreadW: w, spreadH: h,
+      size: paintSize, count: Math.min(24, room), pageW: w, pageH: h, opacity: paintOpacity, assetId: stampAsset, name })] });
+  }
+  async function cornerAsset(artworkId: string) {
+    const existing = assets.find(asset => !asset.deletedAt && asset.libraryArtworkId === artworkId);
+    if (existing) return existing;
+    const asset = await api<Asset>(`/designs/${design!.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId }) });
+    setAssets(current => [...current, asset]);
+    return asset;
+  }
+  function withoutWholeFrames(layers: DesignLayer[]) {
+    const frameIds = new Set(artCatalog.filter(art => art.category === '圖框').map(art => art.id));
+    return layers.filter(layer => (layer.face || 'front') !== face || (layer.kind !== 'frame' && !(layer.kind === 'image' && !layer.cornerPosition && assets.some(asset => asset.id === layer.assetId && asset.libraryArtworkId && frameIds.has(asset.libraryArtworkId)))));
+  }
+  function makeCorner(position: CornerPosition, artworkId: string, assetId: string, previous?: DesignLayer) {
+    const entry = artCatalog.find(art => art.id === artworkId)!;
+    const size = dimensions(designRef.current!, template!);
+    const label = cornerPositions.find(corner => corner.id === position)!.name;
+    const edge = previous?.width || Math.min(35, Math.min(size.w, size.h) / 2 - template!.safeMm);
+    const layer = previous ? { ...previous, name: `${entry.name}・${label}`, assetId, cornerArtworkId: artworkId, ...cornerCropBox(position) }
+      : newLayer('image', { name: `${entry.name}・${label}`, assetId, cornerPosition: position, cornerArtworkId: artworkId, ...cornerCropBox(position), width: edge, height: edge, locked: true, aspectRatioLocked: true, face });
+    return placeCorner(layer, size.w, size.h, template!.safeMm);
+  }
+  async function setCornerArtwork(position: CornerPosition, artworkId: string) { await run(async () => {
+    const current = designRef.current!;
+    const previous = current.layers.find(layer => (layer.face || 'front') === face && layer.cornerPosition === position);
+    if (!artworkId) {
+      change({ ...current, layers: current.layers.filter(layer => (layer.face || 'front') !== face || layer.cornerPosition !== position) });
+      if (selected === previous?.id) setSelectedState(null);
+      return;
+    }
+    if (!previous && withoutWholeFrames(current.layers).length >= 150) throw new Error('圖層已達上限，請先移除部分圖層。');
+    const asset = await cornerAsset(artworkId);
+    const layer = makeCorner(position, artworkId, asset.id, previous);
+    const layers = withoutWholeFrames(designRef.current!.layers);
+    change({ ...designRef.current!, layers: previous ? layers.map(item => item.id === previous.id ? layer : item) : [...layers, layer] });
+    if (selected && !layers.some(item => item.id === selected)) setSelectedState(null);
+    await save(designRef.current);
+  }); }
+  async function applyFourCorners(artworkId: string) { await run(async () => {
+    const current = designRef.current!;
+    const baseLayers = withoutWholeFrames(current.layers);
+    const missing = cornerPositions.filter(corner => !baseLayers.some(layer => (layer.face || 'front') === face && layer.cornerPosition === corner.id)).length;
+    if (baseLayers.length + missing > 150) throw new Error('圖層已達上限，請先移除部分圖層。');
+    const asset = await cornerAsset(artworkId);
+    const layers = [...baseLayers];
+    for (const { id } of cornerPositions) {
+      const index = layers.findIndex(layer => (layer.face || 'front') === face && layer.cornerPosition === id);
+      const layer = makeCorner(id, artworkId, asset.id, index >= 0 ? layers[index] : undefined);
+      if (index >= 0) layers[index] = layer; else layers.push(layer);
+    }
+    change({ ...designRef.current!, layers });
+    if (selected && !layers.some(item => item.id === selected)) setSelectedState(null);
+    await save(designRef.current);
+  }); }
+  function resizeCorner(position: CornerPosition, size: number) {
+    const layer = designRef.current?.layers.find(item => (item.face || 'front') === face && item.cornerPosition === position);
+    if (layer) patchLayer({ width: size, height: size }, layer.id);
+  }
   async function updateCart(id: string, quantity: number) { await run(async () => { await api(`/cart/${id}`, { method: 'PATCH', body: JSON.stringify({ quantity }) }); setCart(await api<CartItem[]>('/cart')); }); }
 
   async function openDesign(id: string) { await run(async () => { await save(designRef.current); applyLoaded(await api<Loaded>(`/designs/${id}`)); setShowLibrary(false); }); }
@@ -211,6 +328,7 @@ function App() {
   async function restore(id: string) { await run(async () => { const v = await api<{ design: Design }>(`/versions/${id}`); change(withPrintStack(v.design, v.design.printStack || (v.design.duplex ? 'cmyk-white-cmyk' : v.design.printView === 'acrylic' ? 'cmyk-white' : 'white-cmyk'))); setSelected(null); await save(designRef.current); }); }
   async function cutout() { if (!chosen?.assetId) return; await run(async () => { const result = await api<Asset>(`/assets/${chosen.assetId}/remove-background`, { method: 'POST' }); setAssets(a => [...a, result]); patchLayer({ assetId: result.id }); await save(designRef.current); }); }
   const mm = design && template ? dimensions(design, template) : undefined;
+  const selectedBrushArtwork = assets.find(asset => asset.id === stampAsset)?.libraryArtworkId;
   const offCanvasLayerIds = new Set(mm ? faceLayers.filter(layer => layer.visible && layer.kind !== 'frame' && (layer.x + layer.width <= 0 || layer.y + layer.height <= 0 || layer.x >= mm.w || layer.y >= mm.h)).map(layer => layer.id) : []);
   const selectedAsset = assets.find(a => a.id === chosen?.assetId);
   const photoAssetIds = new Set(assets.filter(asset => !asset.libraryArtworkId).map(asset => asset.id));
@@ -281,10 +399,12 @@ function App() {
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')} aria-label="關閉錯誤">×</button><button onClick={() => save().catch(report)}>重試儲存</button></div>}
     {failed.length > 0 && <div className="error" role="alert">有 {failed.length} 張圖片載入失敗，請重新整理後再確認輸出。</div>}
     <div className="workspace">
-      <nav className="rail" aria-label="素材面板">{[['uploads', '↥', '上傳'], ['text', 'T', '文字'], ['elements', '✿', '素材'], ['frames', '▣', '邊框'], ['brush', '〰', '筆刷'], ...(chosen?.kind === 'image' ? [['image', '◐', '調圖']] : chosen?.kind === 'text' ? [['text-edit', 'Aa', '調字']] : [])].map(([id, icon, name]) => <button key={id} aria-label={name} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setPaintMode('select'); }}><b>{icon}</b><span>{name}</span></button>)}</nav>
-      <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${tab === 'uploads' && (template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', 'text-edit': '調整文字', frames: '邊框與角落', elements: '裝飾與效果', brush: '筆刷與花瓣印章', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' || tab === 'text-edit' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
+      <nav className="rail" aria-label="素材面板">{[['uploads', '↥', '上傳'], ['text', 'T', '文字'], ['elements', '✿', '素材'], ['corners', '⌜', '四角'], ['brush', '〰', '筆刷'], ...(chosen?.kind === 'image' && !chosen.cornerPosition ? [['image', '◐', '調圖']] : chosen?.kind === 'text' ? [['text-edit', 'Aa', '調字']] : [])].map(([id, icon, name]) => <button key={id} aria-label={name} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setPaintMode('select'); }}><b>{icon}</b><span>{name}</span></button>)}</nav>
+      <aside className={`asset-panel ${tab === 'background' ? 'material-panel' : ''} ${tab === 'uploads' && (template.presentation === 'acrylic-badge' || template.presentation === 'photo-holder') ? 'badge-options-visible' : ''}`}><div className="panel-heading"><span>{({ uploads: '你的圖片', text: '加入文字', 'text-edit': '調整文字', elements: '裝飾與效果', corners: '四角圖框', brush: '筆刷與灑落效果', image: '調整圖片', background: '底材與列印效果', layers: '圖層管理', versions: '設計版本' } as Record<string, string>)[tab]}</span><small>{tab === 'image' || tab === 'text-edit' ? '已選取' : tab === 'layers' ? `${design.layers.length} 個圖層` : '創作工具'}</small></div>
+        {tab === 'corners' && <CornerPanel layers={faceLayers} width={mm!.w} height={mm!.h} safe={template.safeMm} disabled={busy} onArtwork={setCornerArtwork} onSize={resizeCorner} onAll={applyFourCorners} onClear={() => { change({ ...design, layers: design.layers.filter(layer => (layer.face || 'front') !== face || !layer.cornerPosition) }); if (chosen?.cornerPosition) setSelectedState(null); }}/>}
         {tab === 'image' && chosen?.kind === 'image' && <section className="image-edit-panel" aria-label="已選圖片編輯">
           <div className="selected-image-card">{selectedAsset && <img src={assetUrl(selectedAsset)} alt=""/>}<span><b>{chosen.name}</b><small>{selectedAsset ? `${selectedAsset.width} × ${selectedAsset.height} px` : '圖片素材'}</small></span></div>
+          <ScreenTearControls layer={chosen} patch={patchLayer} disabled={busy || chosen.locked}/>
           {chosenIsPhoto && selectedAsset ? <PhotoImageControls layer={chosen} asset={selectedAsset} design={design} template={template} patch={patchLayer}/> : <><TransformControls layer={chosen} patch={patchLayer} disabled={busy || chosen.locked || !!cropBox} restore={selectedAsset ? restoreImageRatio : undefined}/><ImageCropControls layer={chosen} active={!!cropBox} start={startCrop} ratio={cropRatio} apply={applyCrop} cancel={() => setCropBox(null)} reset={clearCrop}/></>}
           <ImageCornerControls layer={chosen} patch={patchLayer}/>
           <ImageAdjustments layer={chosen} patch={patchLayer}/>
@@ -292,30 +412,22 @@ function App() {
           <small className="muted">{config?.backgroundRemoval ? '將圖片送往 remove.bg 處理；原圖完整保留。' : '需在伺服器設定 remove.bg 金鑰。'}</small>
           {selectedAsset?.sourceAssetId && <button onClick={() => patchLayer({ assetId: selectedAsset.sourceAssetId })}>還原原始圖片</button>}
           {effectivePpi !== null && <p className={effectivePpi < MIN_IMAGE_PPI ? 'resolution-warning' : 'muted'}>目前有效解析度：約 {effectivePpi} PPI {effectivePpi < MIN_IMAGE_PPI ? `（低於 ${MIN_IMAGE_PPI} PPI 最低標準）` : '（符合印前標準）'}</p>}
-          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', frames: '邊框', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
+          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', corners: '四角', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
         </section>}
         {tab === 'text-edit' && chosen?.kind === 'text' && <section className="image-edit-panel text-edit-panel" aria-label="已選文字編輯">
           <div className="selected-image-card"><span><b>{chosen.name}</b><small>文字圖層・即時同步</small></span></div>
           <TextControls layer={chosen} patch={patchLayer}/>
-          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', frames: '邊框', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
-        </section>}
-        {tab === 'frames' && <section className="image-edit-panel frame-edit-panel" aria-label="邊框選擇與調整">
-          <FrameLibrary add={addArtwork} disabled={busy} currentId={activeFrame?.frameId}/>
-          {activeFrame && <><div className="selected-image-heading"><div><b>{activeFrame.name}</b><small>四角＋四邊群組圖框</small></div></div>
-          <p className="muted">四個角落保持正方形比例；四條直線只沿長度延伸，線條粗度固定並藏在角落下方。</p>
-          {activeFrame.assetId ? <div className="frame-corner-controls"><b>四角大小</b><div className="frame-corner-grid">{([['左上角', 'frameTopLeftScale'], ['右上角', 'frameTopRightScale'], ['右下角', 'frameBottomRightScale'], ['左下角', 'frameBottomLeftScale']] as const).map(([label, key]) => <label key={key}><span>{label}<output>{Math.round((activeFrame[key] ?? 1) * 100)}%</output></span><input aria-label={`${label}大小`} type="range" min="0.45" max="1.5" step="0.05" value={activeFrame[key] ?? 1} disabled={busy} onChange={e => patchLayer({ [key]: +e.target.value }, activeFrame.id)}/></label>)}</div><button disabled={busy} onClick={() => patchLayer({ frameTopLeftScale: 1, frameTopRightScale: 1, frameBottomRightScale: 1, frameBottomLeftScale: 1 }, activeFrame.id)}>四角恢復 100%</button><small>可分別調整 45%–150%；設定會在更換其他邊框時沿用。</small></div> : <p className="empty-note">此向量圖框會自動適應版面，不需調整角落大小。</p>}
-          <div className="frame-edit-actions"><button disabled={busy} onClick={() => patchLayer({ visible: !activeFrame.visible }, activeFrame.id)}>{activeFrame.visible ? '隱藏圖框' : '顯示圖框'}</button><button className="danger" disabled={busy} onClick={() => { change({ ...design, layers: design.layers.filter(l => l.id !== activeFrame.id) }); if (selected === activeFrame.id) setSelected(null); }}>移除圖框</button></div></>}
-          {!activeFrame && <p className="empty-note">尚未套用邊框。從上方選一款後，四角比例與顯示設定會集中在這裡。</p>}
+          <button className="return-tool" onClick={() => setTab(previousTool.current)}>返回{({ uploads: '上傳', text: '文字', elements: '素材', corners: '四角', brush: '筆刷' } as Record<string, string>)[previousTool.current] || '工具'}</button>
         </section>}
         {tab === 'uploads' && template.presentation === 'photo-holder' && <PhotoHolderOptions design={design} change={change} disabled={busy}/>}
         {tab === 'uploads' && template.presentation === 'acrylic-badge' && <section className="badge-accessory-panel" aria-label="識別牌配件與孔槽"><h3>配件與孔槽</h3><div className="badge-accessory-buttons">{badgeAccessories.map(a => <button key={a.id} disabled={busy} aria-pressed={design.badgeAccessory === a.id} onClick={() => change({ ...design, badgeAccessory: a.id, slot: { enabled: true, widthMm: a.widthMm, heightMm: a.heightMm, shape: a.shape, ...(a.shape === 'circle' ? { position: design.slot?.position || 'center' } : {}) } })}>{a.image ? <img src={`/accessories/${a.image}`} alt=""/> : <span className="accessory-symbol" aria-hidden="true">♧</span>}<span><b>{a.name}</b><small>{a.shape === 'circle' ? `圓孔 Ø${a.widthMm} mm` : `長槽 ${a.widthMm} × ${a.heightMm} mm`}</small></span></button>)}</div><div className="badge-extra-options"><button disabled={busy} aria-pressed={design.badgeAccessory === 'none' || (!design.badgeAccessory && !design.slot?.enabled)} onClick={() => change({ ...design, badgeAccessory: 'none', slot: undefined })}>不開孔</button><button disabled={busy} aria-pressed={design.badgeAccessory === 'custom' || (!design.badgeAccessory && !!design.slot?.enabled)} onClick={() => change({ ...design, badgeAccessory: 'custom', slot: { enabled: true, widthMm: design.slot?.widthMm || 12, heightMm: design.slot?.heightMm || 3, shape: 'slot' } })}>自訂長槽</button></div>
         {design.badgeAccessory === 'custom' && <section className="badge-custom-slot" aria-label="識別牌開槽設定"><label className="slot-toggle"><input type="checkbox" checked={!!design.slot?.enabled} onChange={e => change({ ...design, badgeAccessory: 'custom', slot: { shape: 'slot', widthMm: design.slot?.widthMm || 12, heightMm: design.slot?.heightMm || 3, enabled: e.target.checked } })}/>開槽</label>{design.slot?.enabled && <div className="slot-dimensions"><Numeric label="槽長 (mm)" value={design.slot.widthMm} min={1} max={Math.floor(mm!.w - template.safeMm * 2)} step={1} snapOnBlur onChange={value => change({ ...design, badgeAccessory: 'custom', slot: { ...design.slot!, shape: 'slot', widthMm: value } })}/><Numeric label="槽寬 (mm)" value={design.slot.heightMm} min={1} max={Math.floor(mm!.h - 5 - template.safeMm)} step={1} snapOnBlur onChange={value => change({ ...design, badgeAccessory: 'custom', slot: { ...design.slot!, shape: 'slot', heightMm: value } })}/></div>}<small>厚 3 mm・槽頂離上緣 5 mm、置中・每次 1 mm<br/>直橫切換保持上方；槽內不列印，製作包附開槽路徑。</small></section>}
           {design.slot?.enabled && design.slot.shape === 'circle' && <div className="badge-radius-picker hole-position-picker" role="group" aria-label="圓孔位置"><span>圓孔位置</span>{([['left', '左'], ['center', '中'], ['right', '右']] as const).map(([position, label]) => <button key={position} disabled={busy} aria-pressed={(design.slot?.position || 'center') === position} onClick={() => change({ ...design, slot: { ...design.slot!, position } })}>{label}</button>)}</div>}
           <div className="badge-radius-picker" role="group" aria-label="牌身圓角"><span>牌身圓角</span>{([3, 4] as const).map(r => <button key={r} disabled={busy} aria-pressed={badgeRadius(design, template) === r} onClick={() => change({ ...design, badgeCornerRadiusMm: r })}>R{r} mm</button>)}</div><p className="muted">長槽上方置中；圓孔可選左／中／右。<br/>孔槽頂端離邊 5 mm，側孔離側邊 5 mm。<br/>直橫切換保持在上方，孔內不列印。</p></section>}
-        {tab === 'brush' && <div className="brush-tools"><p className="muted">拖曳自由繪畫，或點一下蓋上花瓣。每一筆都可撤銷、移動及刪除。</p><div className="brush-modes"><button aria-pressed={paintMode === 'select'} onClick={() => setPaintMode('select')}>選取／移動</button><button aria-pressed={paintMode === 'pen'} onClick={() => { setPaintMode('pen'); setPaintSize(2); setSelected(null); }}>自由筆刷</button><button aria-pressed={paintMode === 'eraser'} onClick={() => { setPaintMode('eraser'); setPaintSize(8); setSelected(null); }}>橡皮擦</button></div>{paintMode === 'eraser' && <p className="muted">拖曳擦除筆畫、圖片或花瓣的局部；鎖定圖層不受影響。擦除可撤銷，原始圖片保留。</p>}<label>筆刷顏色<input aria-label="筆刷顏色" type="color" value={paintColor} onChange={e => setPaintColor(e.target.value)}/></label><label>{paintMode === 'eraser' ? '橡皮擦大小' : paintMode === 'pen' ? '筆刷粗細' : '花瓣大小'}（mm）<input aria-label="筆刷大小" type="range" min="0.5" max="30" step="0.5" value={paintSize} onChange={e => setPaintSize(+e.target.value)}/><output>{paintSize} mm</output></label><label>透明度<input aria-label="筆刷透明度" type="range" min="0.1" max="1" step="0.05" value={paintOpacity} onChange={e => setPaintOpacity(+e.target.value)}/><output>{Math.round(paintOpacity * 100)}%</output></label><h3>自然飄落花瓣</h3><div className="brush-modes"><button aria-pressed={paintMode === 'petals' && flowerType === 'sakura'} onClick={() => { setFlowerType('sakura'); setPaintMode('petals'); setPaintSize(10); setSelected(null); }}>飄落櫻花</button><button aria-pressed={paintMode === 'petals' && flowerType === 'rose'} onClick={() => { setFlowerType('rose'); setPaintMode('petals'); setPaintSize(12); setSelected(null); }}>飄落玫瑰</button></div>{paintMode === 'petals' && <><label>每次花瓣數量<input aria-label="花瓣數量" type="range" min="3" max="15" value={petalCount} onChange={e => setPetalCount(+e.target.value)}/><output>{petalCount} 片</output></label><button disabled={busy} onClick={() => { const room = 150 - design.layers.length; if (room < petalCount) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...scatterPetals(mm!.w / 2, mm!.h / 2, mm!.w, mm!.h, paintSize, petalCount, flowerType, paintOpacity)] }); }}>灑落整個版面</button><p className="muted">點擊畫布灑下一小簇。正面、側面、翻轉與捲曲姿態隨機混合；每次位置、角度、大小都不同，保存後不再變動。</p></>}<h3>單片寫實印章</h3><div className="asset-grid">{artCatalog.filter(a => a.id.endsWith('-single')).map(a => <button key={a.id} disabled={busy} aria-pressed={paintMode === 'stamp' && assets.find(x => x.id === stampAsset)?.libraryArtworkId === a.id} onClick={() => run(async () => { const asset = assets.find(x => !x.deletedAt && x.libraryArtworkId === a.id) || await api<Asset>(`/designs/${design.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId: a.id }) }); setAssets(old => old.some(x => x.id === asset.id) ? old : [...old, asset]); setStampAsset(asset.id); setPaintMode('stamp'); setPaintSize(12); setSelected(null); })}><img src={`/artwork/${a.file}`} alt=""/>{a.name}</button>)}</div>{paintMode === 'stamp' && <label>印章旋轉<input aria-label="印章旋轉" type="range" min="-180" max="180" step="5" value={stampRotation} onChange={e => setStampRotation(+e.target.value)}/><output>{stampRotation}°</output></label>}<p className="muted">{paintMode === 'select' ? '目前可選取圖層。' : paintMode === 'pen' ? '筆刷啟用中：在畫布拖曳開始繪畫。' : paintMode === 'eraser' ? '橡皮擦啟用中：拖曳擦除局部。' : paintMode === 'petals' ? '飄落模式：點擊畫布灑下隨機花瓣。' : '印章啟用中：點擊畫布可連續蓋印。'}完成後按「選取／移動」調整圖層。</p></div>}
+        {tab === 'brush' && <div className="brush-tools"><p className="muted">拖曳繪畫、灑落星光，或點一下蓋上花瓣。每一筆都可撤銷、移動及刪除。</p><div className="brush-modes"><button aria-pressed={paintMode === 'select'} onClick={() => setPaintMode('select')}>選取／移動</button><button aria-pressed={paintMode === 'pen'} onClick={() => { setPaintMode('pen'); setPaintSize(2); setSelected(null); }}>自由筆刷</button><button aria-pressed={paintMode === 'eraser'} onClick={() => { setPaintMode('eraser'); setPaintSize(8); setSelected(null); }}>橡皮擦</button></div>{paintMode === 'eraser' && <p className="muted">拖曳擦除筆畫、圖片或花瓣的局部；鎖定圖層不受影響。擦除可撤銷，原始圖片保留。</p>}{paintMode === 'pen' && <label>筆刷顏色<input aria-label="筆刷顏色" type="color" value={paintColor} onChange={e => setPaintColor(e.target.value)}/></label>}<label>{paintMode === 'eraser' ? '橡皮擦大小' : paintMode === 'pen' ? '筆刷粗細' : paintMode === 'scatter' ? '光點大小' : '花瓣大小'}（mm）<input aria-label="筆刷大小" type="range" min="0.5" max="30" step="0.5" value={paintSize} onChange={e => setPaintSize(+e.target.value)}/><output>{paintSize} mm</output></label><label>透明度<input aria-label="筆刷透明度" type="range" min="0.1" max="1" step="0.05" value={paintOpacity} onChange={e => setPaintOpacity(+e.target.value)}/><output>{Math.round(paintOpacity * 100)}%</output></label><section className="sprinkle-tools" aria-label="星光灑落筆刷"><h3>星光與光點筆刷</h3><p className="muted">點擊或沿畫布拖曳，讓大小、角度、透明度和落點自然變化。</p><div className="sprinkle-styles">{([['star-glow', '星光灑落'], ['bokeh', '柔光光點']] as const).map(([artworkId, label]) => <button key={artworkId} disabled={busy} aria-pressed={paintMode === 'scatter' && selectedBrushArtwork === artworkId} onClick={() => activateSprinkle(artworkId)}><img src={svgDataUrl(artCatalog.find(art => art.id === artworkId)?.svg || '')} alt=""/><span>{label}</span></button>)}</div>{paintMode === 'scatter' && <><label>灑落密度<input aria-label="灑落密度" type="range" min="1" max="5" step="1" value={sprinkleDensity} onChange={e => setSprinkleDensity(+e.target.value)}/><output>{sprinkleDensity} 顆／步</output></label><button className="sprinkle-fill" disabled={busy} onClick={fillSparkles}>灑滿目前畫布</button><small>上方可調整光點大小與透明度；每筆可撤銷，灑落後可個別移動或刪除。</small></>}</section><h3>自然飄落花瓣</h3><div className="brush-modes"><button aria-pressed={paintMode === 'petals' && flowerType === 'sakura'} onClick={() => { setFlowerType('sakura'); setPaintMode('petals'); setPaintSize(10); setSelected(null); }}>飄落櫻花</button><button aria-pressed={paintMode === 'petals' && flowerType === 'rose'} onClick={() => { setFlowerType('rose'); setPaintMode('petals'); setPaintSize(12); setSelected(null); }}>飄落玫瑰</button></div>{paintMode === 'petals' && <><label>每次花瓣數量<input aria-label="花瓣數量" type="range" min="3" max="15" value={petalCount} onChange={e => setPetalCount(+e.target.value)}/><output>{petalCount} 片</output></label><button disabled={busy} onClick={() => { const room = 150 - design.layers.length; if (room < petalCount) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...scatterPetals(mm!.w / 2, mm!.h / 2, mm!.w, mm!.h, paintSize, petalCount, flowerType, paintOpacity)] }); }}>灑落整個版面</button><p className="muted">點擊畫布灑下一小簇。正面、側面、翻轉與捲曲姿態隨機混合；每次位置、角度、大小都不同，保存後不再變動。</p></>}<h3>單片寫實印章</h3><div className="asset-grid">{artCatalog.filter(a => a.id.endsWith('-single')).map(a => <button key={a.id} disabled={busy} aria-pressed={paintMode === 'stamp' && assets.find(x => x.id === stampAsset)?.libraryArtworkId === a.id} onClick={() => run(async () => { const asset = assets.find(x => !x.deletedAt && x.libraryArtworkId === a.id) || await api<Asset>(`/designs/${design.id}/library`, { method: 'POST', body: JSON.stringify({ artworkId: a.id }) }); setAssets(old => old.some(x => x.id === asset.id) ? old : [...old, asset]); setStampAsset(asset.id); setPaintMode('stamp'); setPaintSize(12); setSelected(null); })}><img src={`/artwork/${a.file}`} alt=""/>{a.name}</button>)}</div>{paintMode === 'stamp' && <label>印章旋轉<input aria-label="印章旋轉" type="range" min="-180" max="180" step="5" value={stampRotation} onChange={e => setStampRotation(+e.target.value)}/><output>{stampRotation}°</output></label>}<p className="muted">{paintMode === 'select' ? '目前可選取圖層。' : paintMode === 'pen' ? '筆刷啟用中：在畫布拖曳開始繪畫。' : paintMode === 'eraser' ? '橡皮擦啟用中：拖曳擦除局部。' : paintMode === 'petals' ? '飄落模式：點擊畫布灑下隨機花瓣。' : paintMode === 'scatter' ? '星光筆刷啟用中：點擊或拖曳灑落光點。' : '印章啟用中：點擊畫布可連續蓋印。'}完成後按「選取／移動」調整圖層。</p></div>}
         {tab === 'uploads' && <><p className="muted">讓喜歡的畫面，成為日常的一部分。</p><button className="upload-zone" disabled={busy} onClick={() => fileInput.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); upload(e.dataTransfer.files); }}><span>＋</span><b>上傳圖片</b><small>點擊或拖入多張圖片<br/>JPG、PNG、WebP · 每張 20 MB</small></button><input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden data-testid="file-upload" onChange={e => { if (e.target.files) upload(e.target.files); e.target.value = ''; }}/><div className="section-label">素材庫 <span>{assets.filter(a => !a.deletedAt && !a.libraryArtworkId).length}</span></div><div className="asset-grid">{assets.filter(a => !a.deletedAt && !a.libraryArtworkId).map(a => <div className="asset-tile" key={a.id}><button disabled={busy} title={a.originalName} onClick={() => add(newLayer('image', { assetId: a.id, name: a.originalName, width: 85, height: 85 * a.height / a.width }))}><img src={`/api/assets/${a.id}`} alt={a.originalName}/><small>{a.variant === 'cutout' ? '已去背' : '原始圖片'}</small></button><button className="asset-delete" aria-label={`刪除素材 ${a.originalName}`} disabled={busy} onClick={() => run(async () => { const updated = await api<Asset>(`/assets/${a.id}`, { method: 'DELETE' }); setAssets(old => old.map(item => item.id === a.id ? updated : item)); })}>×</button></div>)}</div>{!assets.some(a => !a.deletedAt && !a.libraryArtworkId) && <div className="empty-note">刪除只從素材庫移除，已使用圖層與確認版本的原檔保留。<br/>每張圖片都能獨立移動與編輯。</div>}<div className="tip"><b>小提示</b><p>{template.presentation === 'photo-holder' ? '照片會自動鋪滿；放大後可上下左右拖曳取景。' : '選取圖片後，拖曳角落縮放，拖曳上方圓點旋轉。'}</p></div></>}
-        {tab === 'text' && <><p className="muted">用一句話，留下你的故事。</p><label>新增文字字體<select aria-label="新增文字字體" value={fontChoice} disabled={busy} onChange={e => setFontChoice(e.target.value as FontId)}>{fonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label><div className="font-sample" style={{ fontFamily: getFont(fontChoice).family }}>把喜歡，留在日常<br/>萬事造物 123 ABC</div><button className="text-preset" disabled={busy} onClick={() => add(newLayer('text', { fontId: fontChoice, name: '標題', text: '把喜歡，留在日常', fontSize: 10, width: 110, height: 30, fill: '#284a43', x: 19, y: 90 }))}>加入標題</button><button className="text-preset small" disabled={busy} onClick={() => add(newLayer('text', { fontId: fontChoice, name: '內文', text: '屬於你的美好時刻', fontSize: 5, width: 100, height: 25, fill: '#65736b', x: 24, y: 120 }))}>加入內文</button><p className="muted">內建 3 個開源繁中字體家族、5 種款式，採 SIL OFL 1.1 授權，可用於商業設計。新增或選取文字後，左側會自動開啟細調面板。</p></>}
-        {tab === 'elements' && <><ArtLibrary add={addArtwork} disabled={busy}/><details className="basic-elements"><summary>基本形狀與 UV 效果</summary><p className="muted">為設計加上一點個性。</p><div className="section-label">基本裝飾</div><div className="element-grid">{[['petal', '❀', '花瓣'], ['star', '✦', '星芒'], ['circle', '●', '圓形'], ['rect', '■', '方形']].map(([shape, symbol, label]) => <button key={shape} disabled={busy} onClick={() => add(newLayer('shape', { shape: shape as DesignLayer['shape'], name: label }))}><b>{symbol}</b>{label}</button>)}</div>{template.presentation !== 'photo-holder' && <><div className="section-label">UV 微浮雕</div><button className="uv-card" disabled={busy} onClick={() => add(newLayer('uv', { name: 'UV 花瓣', shape: 'petal', fill: '#d7ba89', width: 28, height: 42 }))}><span>✧</span><b>加入 UV 花瓣效果</b><small>獨立效果圖層與灰階遮罩</small></button><p className="muted">預覽為效果位置示意，不代表實際凸起高度。UV 圖層可在右側切換形狀。</p></>}</details></>}
+        {tab === 'text' && <><p className="muted">用一句話，留下你的故事。</p><label>新增文字字體<select aria-label="新增文字字體" value={fontChoice} disabled={busy} onChange={e => setFontChoice(e.target.value as FontId)}><FontOptions/></select></label><div className="font-sample" style={{ fontFamily: getFont(fontChoice).family }}>把喜歡，留在日常<br/>萬事造物 123 ABC</div><button className="text-preset" disabled={busy} onClick={() => add(newLayer('text', { fontId: fontChoice, name: '標題', text: '把喜歡，留在日常', fontSize: 10, width: 110, height: 30, fill: '#284a43', x: 19, y: 90 }))}>加入標題</button><button className="text-preset small" disabled={busy} onClick={() => add(newLayer('text', { fontId: fontChoice, name: '內文', text: '屬於你的美好時刻', fontSize: 5, width: 100, height: 25, fill: '#65736b', x: 24, y: 120 }))}>加入內文</button><p className="muted">內建 7 個可商用開源繁中字體家族、9 種款式；新增或選取文字後可在左側細調。</p></>}
+        {tab === 'elements' && <><ArtLibrary add={addArtwork} addQuote={addQuotePreset} disabled={busy}/><details className="basic-elements"><summary>基本形狀與 UV 效果</summary><p className="muted">為設計加上一點個性。</p><div className="section-label">基本裝飾</div><div className="element-grid">{[['petal', '❀', '花瓣'], ['star', '✦', '星芒'], ['circle', '●', '圓形'], ['rect', '■', '方形']].map(([shape, symbol, label]) => <button key={shape} disabled={busy} onClick={() => add(newLayer('shape', { shape: shape as DesignLayer['shape'], name: label }))}><b>{symbol}</b>{label}</button>)}</div>{template.presentation !== 'photo-holder' && <><div className="section-label">UV 微浮雕</div><button className="uv-card" disabled={busy} onClick={() => add(newLayer('uv', { name: 'UV 花瓣', shape: 'petal', fill: '#d7ba89', width: 28, height: 42 }))}><span>✧</span><b>加入 UV 花瓣效果</b><small>獨立效果圖層與灰階遮罩</small></button><p className="muted">預覽為效果位置示意，不代表實際凸起高度。UV 圖層可在右側切換形狀。</p></>}</details></>}
       </aside>
       <main className={`editor-area ${(template.presentation?.startsWith('acrylic-') || template.presentation === 'photo-holder') ? 'block-editor' : ''}`}><LayerWindow layers={faceLayers} selected={selected} select={setSelected} patch={patchLayer} disabled={busy} reorder={(from, to) => { const layers = [...design.layers], a = layers.findIndex(l => l.id === from), b = layers.findIndex(l => l.id === to); if (a < 0 || b < 0 || layers[a].locked) return; const [item] = layers.splice(a, 1); layers.splice(b, 0, item); change({ ...design, layers }); }}/><div className="editor-toolbar"><div className="row"><button title="撤銷 Ctrl+Z" aria-label="撤銷" disabled={!history.past.length || busy} onClick={() => undo()}>↶</button><button title="重做 Ctrl+Shift+Z" aria-label="重做" disabled={!history.future.length || busy} onClick={() => undo(true)}>↷</button><span className="toolbar-separator"/><span className="template-name">{template.name}</span>{template.presentation === 'photo-holder' ? <span className="orientation-toggle fixed-orientation"><span aria-hidden="true">▯</span>固定直式</span> : <button className="orientation-toggle" aria-label={design.orientation === 'portrait' ? '切換為橫式' : '切換為直式'} title="點擊切換直式／橫式" disabled={busy} onClick={() => { change({ ...design, orientation: design.orientation === 'portrait' ? 'landscape' : 'portrait' }); setSelected(null); setTransient(null); }}><span aria-hidden="true">{design.orientation === 'portrait' ? '▯' : '▭'}</span>{design.orientation === 'portrait' ? '直式' : '橫式'}<span aria-hidden="true">⇄</span></button>}</div><button aria-pressed={marquee} disabled={busy} onClick={() => { setMarquee(!marquee); setSelected(null); setSelectedIds([]); setPaintMode('select'); }}>框選／多選</button>{marquee && <><label><input type="checkbox" checked={contained} onChange={e => setContained(e.target.checked)}/>完全包含才選取</label><span>已選 {design.layers.filter(l => selectedIds.includes(l.id) && l.visible && !l.locked).length} 個</span><button disabled={busy || !selectedIds.length} onClick={remove}>刪除選取</button></>}<button disabled={busy || !design.layers.length} onClick={() => { if (window.confirm('清空目前畫布的所有圖層（包含鎖定與隱藏圖層）？商品設定、上傳原圖與購物車確認版本會保留，可用撤銷復原。')) { change({ ...design, layers: [] }); setSelected(null); setTransient(null); setPaintMode('select'); } }}>清空畫布</button><label className="guide-toggle"><input type="checkbox" checked={guides} onChange={e => setGuides(e.target.checked)}/>輔助線</label></div>
 <div className="cad-selection-hint" role="status">{paintMode !== 'select' ? '切換「選取／移動」後，可直接在空白處拖曳框選' : selectedIds.length ? `已選 ${selectedIds.length} 個 · 拖動任一選取物件可整批移動 · Delete 刪除` : 'CAD 框選：空白處向右拖＝完全框住　向左拖＝碰到即選　Shift＝追加'}</div>
@@ -327,7 +439,7 @@ function App() {
         {offCanvasLayerIds.size > 0 && <div className="off-canvas-warning" role="status"><span>有 {offCanvasLayerIds.size} 個圖層在目前商品畫布外；內容仍完整保留。</span><button disabled={busy} onClick={() => change({ ...design, layers: design.layers.map(layer => offCanvasLayerIds.has(layer.id) ? fitNewLayer(layer) : layer) })}>縮放並移回畫布</button></div>}
         <div className="dimension-workspace">
           <div className="dimension-horizontal"><span aria-hidden="true">↔</span>{design.sizeId === 'custom' && design.customSize ? <DimensionControl axis="長" label="長 (mm)" value={mm!.w} min={20} max={250} onChange={value => change({ ...design, customSize: { ...design.customSize!, [design.orientation === 'portrait' ? 'widthMm' : 'heightMm']: value } })}/> : <span>{template.presentation?.startsWith('acrylic-') ? '長' : '寬'} {mm!.w} mm</span>}</div>
-          <div className="dimension-canvas protected-preview"><EditorCanvas photoAssetIds={photoAssetIds} cropBox={cropBox} setCropBox={setCropBox} liveMany={setTransientMany} marquee={marquee} contained={contained} selectedIds={selectedIds} selectMany={setSelectedIds} replaceLayers={layers => change({ ...design, layers: design.layers.map(l => layers.find(v => v.id === l.id) || l) })} createBatch={layers => { if (design.layers.length + layers.length > 150) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...layers] }); }} paint={tab === 'brush' && paintMode !== 'select' ? { mode: paintMode, color: paintColor, size: paintSize, opacity: paintOpacity, assetId: stampAsset, rotation: stampRotation, flowerType, count: petalCount } : undefined} create={l => { if (design.layers.length >= 150) { setError('最多 150 個圖層，請先刪除不需要的筆畫。'); return; } change({ ...design, layers: [...design.layers, l] }); }} design={canvasDesign!} template={template} images={images} selected={selected} select={setSelected} commit={l => patchLayer(l, l.id)} live={setTransient} zoom={zoom} guides={guides} disabled={busy || confirmation}/></div>
+          <div className="dimension-canvas protected-preview"><EditorCanvas photoAssetIds={photoAssetIds} cropBox={cropBox} setCropBox={setCropBox} liveMany={setTransientMany} marquee={marquee} contained={contained} selectedIds={selectedIds} selectMany={setSelectedIds} replaceLayers={layers => change({ ...design, layers: design.layers.map(l => layers.find(v => v.id === l.id) || l) })} createBatch={layers => { if (design.layers.length + layers.length > 150) { setError('圖層已達上限，請先移除部分圖層。'); return; } change({ ...design, layers: [...design.layers, ...layers] }); }} paint={tab === 'brush' && paintMode !== 'select' ? { mode: paintMode, color: paintColor, size: paintSize, opacity: paintOpacity, assetId: stampAsset, rotation: stampRotation, flowerType, count: paintMode === 'scatter' ? sprinkleDensity : petalCount, name: selectedBrushArtwork === 'bokeh' ? '柔光光點筆刷' : '星光筆刷', remaining: 150 - design.layers.length } : undefined} create={l => { if (design.layers.length >= 150) { setError('最多 150 個圖層，請先刪除不需要的筆畫。'); return; } change({ ...design, layers: [...design.layers, l] }); }} design={canvasDesign!} template={template} images={images} selected={selected} select={setSelected} commit={l => patchLayer(l, l.id)} live={setTransient} zoom={zoom} guides={guides} disabled={busy || confirmation}/></div>
           <div className="dimension-vertical"><span aria-hidden="true">↕</span>{design.sizeId === 'custom' && design.customSize ? <DimensionControl vertical axis="高" label="高 (mm)" value={mm!.h} min={20} max={250} onChange={value => change({ ...design, customSize: { ...design.customSize!, [design.orientation === 'portrait' ? 'heightMm' : 'widthMm']: value } })}/> : <span>高<br/>{mm!.h} mm</span>}
 
           </div>
@@ -338,7 +450,7 @@ function App() {
       </main>
       <aside className={`right-panel ${chosen ? 'has-selection' : ''}`}><div className="preview-sticky"><div className="panel-heading"><span>成品預覽</span><small className="live-tag">● 即時同步 · 僅供預覽</small></div><div className="protected-preview protected-scene"><ProductScene design={preview!} template={template} images={images}/></div><div className="specs"><span>{template.presentation === 'photo-holder' ? '相紙尺寸' : '成品尺寸'}<b>{mm!.w} × {mm!.h} mm</b></span><span>圖稿輸出<b>{template.dpi} PPI</b></span></div></div>
         <div className="inspector"><div className="panel-heading"><span>{chosen ? '圖層設定' : '開始你的創作'}</span>{chosen && <small>{chosen.kind === 'uv' ? 'UV 效果' : chosen.kind === 'image' ? '圖片' : chosen.kind === 'text' ? '文字' : '裝飾'}</small>}</div>
-          {chosen?.kind === 'frame' ? <p className="muted">邊框的選擇與四角比例統一放在左側固定的「邊框」欄位。</p> : chosen ? <><label>圖層名稱<input value={chosen.name} disabled={busy || chosen.locked} onChange={e => patchLayer({ name: e.target.value })}/></label>{chosen.locked && <p className="muted">此圖層已鎖定。<button onClick={() => patchLayer({ locked: false })} disabled={busy}>解鎖</button></p>}<fieldset disabled={busy || chosen.locked}>
+          {chosen?.cornerPosition ? <p className="muted">此角落的圖案與大小請在左側「四角」設定。</p> : chosen?.kind === 'frame' ? <><p className="muted">這是舊版邊框。新圖框請到左側「四角」設定。</p><div className="row layer-actions"><button disabled={busy} onClick={() => patchLayer({ visible: !chosen.visible })}>{chosen.visible ? '隱藏' : '顯示'}</button><button className="danger" disabled={busy} onClick={remove}>刪除舊邊框</button></div></> : chosen ? <><label>圖層名稱<input value={chosen.name} disabled={busy || chosen.locked} onChange={e => patchLayer({ name: e.target.value })}/></label>{chosen.locked && <p className="muted">此圖層已鎖定。<button onClick={() => patchLayer({ locked: false })} disabled={busy}>解鎖</button></p>}<fieldset disabled={busy || chosen.locked}>
             {chosen.kind === 'text' && <p className="muted">文字內容、字體、粗斜體、顏色、字距與行距請在左側「調字」面板修改。</p>}
             {chosenIsPhoto ? <p className="photo-position-note">照片已固定直式滿版。放大後可直接上下左右拖曳取景；電腦請用左側放大滑桿，手機可在照片上雙指縮放。</p> : <div className="input-grid">{(['x', 'y', 'width', 'height', 'rotation'] as const).map((key, i) => <Numeric key={key} label={['X (mm)', 'Y (mm)', '寬 (mm)', '高 (mm)', '旋轉 (°)'][i]} value={chosen[key]} min={key === 'width' || key === 'height' ? 0.1 : -1000} max={1000} onChange={v => patchLayer(chosen.kind === 'image' && (key === 'width' || key === 'height') ? resizeLayerDimension(chosen, key, v, shiftHeld.current) : { [key]: v })}/>)}</div>}
             {chosen.kind !== 'image' && chosen.kind !== 'text' && <label>顏色<input type="color" value={chosen.fill} onChange={e => patchLayer({ fill: e.target.value })}/></label>}
@@ -355,30 +467,36 @@ function App() {
     {confirmation && <div className="modal-backdrop"><section className="modal confirm-modal" role="dialog" aria-modal="true" aria-label="確認設計"><h2>讓設計，準備成形。</h2><p>{template.presentation === 'photo-holder' ? '確認後會保存不可覆寫的選配與圖稿版本，600 PPI 製作檔只提供工作室後台使用。' : '確認後會保存不可覆寫的製作版本；客戶端只顯示含浮水印的低解析預覽，原圖與製作檔只提供工作室後台使用。'}</p>{template.presentation === 'photo-holder' ? <p>照片立／掛牌 · {design.photoHolder?.photoService === 'print' ? '加購照片列印' : '自備照片，不列印'}<br/>{design.photoHolder?.base ? '加購桌面底座' : '不含底座'} · {design.photoHolder?.nfc ? '背面加裝 NFC' : '無 NFC'}<br/>相紙 {mm!.w} × {mm!.h} mm；外框尺寸待確認。</p> : <p>印刷堆疊：{stackLabel(design)} · 同一份圖稿{template.thicknessMm && <> · 厚 {template.thicknessMm} mm</>}{design.sizeId === 'custom' && <><br/>其他尺寸：需另外報價，設計確認不代表報價已確認。</>}</p>}<div className="confirmation-preview protected-preview"><Preview design={design} template={template} images={images}/></div>{template.presentation === 'photo-holder' ? <p className="muted">以下為含浮水印確認預覽。自備照片不輸出列印檔；NFC 感應內容另行設定。</p> : <p className="muted">成品 {mm!.w} × {mm!.h} mm · 出血 {template.bleedMm} mm · {template.dpi} PPI 圖稿輸出<br/>安全區每邊內縮 {template.safeMm} mm；文字與圖形會以 {template.dpi} PPI 重新繪製。安全線不會印出，也不會自動裁切圖稿。UV 預覽僅為效果示意。</p>}{qualityIssues.length ? <div className="print-quality print-quality-error" role="alert"><b>圖片解析度不足，暫時無法確認</b><ul>{qualityIssues.map(issue => <li key={issue.layerId}>{issue.name}：{issue.ppi} PPI</li>)}</ul><small>請縮小圖片的實際尺寸，或換用更高解析度原圖；最低標準為 {MIN_IMAGE_PPI} PPI。</small></div> : <div className="print-quality print-quality-pass" role="status"><b>✓ 印前解析度檢查通過</b><small>所有可見圖片至少 {MIN_IMAGE_PPI} PPI；製作檔以 {template.dpi} PPI 輸出，可交由最高 {TARGET_PRINTER_DPI} DPI 印表機列印。</small></div>}<div className="row"><button disabled={busy} onClick={() => setConfirmation(false)}>繼續編輯</button><button className="primary" disabled={busy || qualityIssues.length > 0 || failed.length > 0 || design.layers.some(l => l.visible && l.assetId && !images.has(l.assetId))} onClick={() => confirm(true)}>{busy ? '正在加入…' : '確認並加入購物車'}</button></div></section></div>}
   </div>;
 }
+function FontOptions() { return <>{fontGroups.map(group => <optgroup key={group} label={group}>{fonts.filter(font => font.group === group).map(font => <option key={font.id} value={font.id}>{font.name}</option>)}</optgroup>)}</>; }
 function TextControls({ layer, patch }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void }) {
   const size = layer.fontSize || 10, lineHeight = layer.lineHeight ?? 1.3;
+  const inset = layer.quoteStyle ? quoteInsets(layer.quoteStyle, layer.width, layer.height) : { left: 0, right: 0, top: 0, bottom: 0 };
+  const availableWidth = Math.max(.1, layer.width - inset.left - inset.right);
+  const availableHeight = Math.max(.1, layer.height - inset.top - inset.bottom);
   const measurementContext = document.createElement('canvas').getContext('2d');
   const estimatedHeight = (fontSize: number) => {
     if (!layer.text || !measurementContext) return 0;
     measurementContext.font = textFont(layer, fontSize);
     const letterSpacing = layer.letterSpacing || 0;
     const measure = (value: string) => measurementContext.measureText(value).width + Math.max(0, Array.from(value).length - 1) * letterSpacing;
-    const lines = wrapTextLines(layer.text, layer.width, measure).length;
+    const lines = wrapTextLines(layer.text, availableWidth, measure).length;
     return Math.max(0, lines - 1) * fontSize * lineHeight + fontSize * Math.max(lineHeight, 1.12);
   };
-  const mayClip = estimatedHeight(size) > layer.height + .1;
+  const mayClip = estimatedHeight(size) > availableHeight + .1;
   let fittedSize = size;
   if (mayClip) {
     let low = 1, high = size;
-    if (estimatedHeight(low) <= layer.height + .1) for (let step = 0; step < 12; step++) {
+    if (estimatedHeight(low) <= availableHeight + .1) for (let step = 0; step < 12; step++) {
       const middle = (low + high) / 2;
-      if (estimatedHeight(middle) <= layer.height + .1) low = middle; else high = middle;
+      if (estimatedHeight(middle) <= availableHeight + .1) low = middle; else high = middle;
     }
     fittedSize = Math.floor(low * 10) / 10;
   }
   const displaySize = Math.round(size * 10) / 10;
   return <section className="text-style-controls" aria-label="文字樣式">
-    <label>文字字體<select aria-label="文字字體" value={layer.fontId || 'sans'} onChange={e => patch({ fontId: e.target.value as FontId })}>{fonts.map(font => <option key={font.id} value={font.id}>{font.name}</option>)}</select></label>
+    <label>文字字體<select aria-label="文字字體" value={layer.fontId || 'sans'} onChange={e => patch({ fontId: e.target.value as FontId })}><FontOptions/></select></label>
+    <div className="font-sample text-font-preview" style={{ fontFamily: getFont(layer.fontId).family }}>{(layer.text || '把喜歡留在日常').split('\n')[0].slice(0, 16)}</div>
+    <label>文字框樣式<select aria-label="文字框樣式" value={layer.quoteStyle || 'none'} onChange={e => { const style = e.target.value as QuoteStyle | 'none'; patch({ quoteStyle: style === 'none' ? undefined : style, fill: style === 'none' ? '#284a43' : quoteStyles[style].textColor }); }}><option value="none">無框</option>{(Object.keys(quoteStyles) as QuoteStyle[]).map(style => <option key={style} value={style}>{quoteStyles[style].name}</option>)}</select></label>
     <label>文字內容<textarea value={layer.text || ''} onChange={e => patch({ text: e.target.value })}/></label>
     <div className="text-color-size">
       <label>文字顏色<input aria-label="文字顏色" type="color" value={layer.fill} onChange={e => patch({ fill: e.target.value })}/></label>
@@ -458,6 +576,15 @@ function ImageAdjustments({ layer, patch }: { layer: DesignLayer; patch: (change
     {slider('飽和度', 'saturation', saturation, 0, 2)}
     <label>模糊 <output>{blurMm ? `${blurMm.toFixed(1)} mm` : '關閉'}</output><input aria-label="模糊" type="range" min="0" max="10" step="0.1" value={blurMm} onChange={e => patch({ blurMm: +e.target.value })}/></label>
     <small>效果會同步套用到成品預覽與製作檔；模糊限制在圖片框內。</small>
+  </section>;
+}
+function ScreenTearControls({ layer, patch, disabled }: { layer: DesignLayer; patch: (change: Partial<DesignLayer>) => void; disabled: boolean }) {
+  const strength = layer.screenTear ?? 0;
+  return <section className="image-adjustments image-tear-controls" aria-label="撕裂畫面特效">
+    <div className="image-adjustment-heading"><b>撕裂畫面特效</b><output>{strength ? `${strength}%` : '關閉'}</output></div>
+    <label>錯位強度<input aria-label="撕裂畫面強度" type="range" min="0" max="100" step="1" value={strength} disabled={disabled} onChange={e => patch({ screenTear: +e.target.value })}/></label>
+    <div className="tear-presets" role="group" aria-label="撕裂畫面預設">{[[0, '關閉'], [25, '輕微'], [55, '明顯'], [85, '強烈']].map(([value, label]) => <button key={value} type="button" aria-pressed={strength === value} disabled={disabled} onClick={() => patch({ screenTear: Number(value) })}>{label}</button>)}</div>
+    <small>水平斷層與細彩邊會固定在圖片上，預覽及製作檔同步套用。</small>
   </section>;
 }
 function ImageCropControls({ layer, active, start, ratio, apply, cancel, reset }: { layer: DesignLayer; active: boolean; start: () => void; ratio: (ratio: number | null) => void; apply: () => void; cancel: () => void; reset: () => void }) {
