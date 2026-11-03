@@ -10,6 +10,7 @@ import { emptyDesign, newLayer, dimensions, fitFrames, templates, badgeAccessori
 import { render } from '../server/render';
 import { Store } from '../server/store';
 import { artCatalog } from '../shared/artwork';
+import { fontIds } from '../shared/fonts';
 
 function unzip(b: Buffer) {
   const result = new Map<string, Buffer>();
@@ -32,6 +33,7 @@ test('private upload → editable draft → immutable confirmation → complete 
   try {
     assert.equal((await req('/designs')).status, 401);
     cookie = (await req('/session', 'POST')).headers.get('set-cookie')!.split(';')[0];
+    assert.deepEqual((await (await req('/config')).json()).fontIds, fontIds);
     const d = emptyDesign(); delete d.printStack; assert.equal((await req('/designs', 'POST', d)).status, 201);
     const png = await sharp({ create: { width: 1200, height: 800, channels: 4, background: '#ef3344' } }).png().toBuffer();
     const jpg = await sharp(png).jpeg().toBuffer(), webp = await sharp(png).webp().toBuffer();
@@ -42,8 +44,12 @@ test('private upload → editable draft → immutable confirmation → complete 
     assert.notEqual((await req(`/designs/${d.id}/assets`, 'POST', spoofed)).status, 201);
     assert.deepEqual(Buffer.from(await (await req(`/assets/${assets[0].id}?original=1`)).arrayBuffer()), png);
     assert.equal((await req(`/assets/${assets[0].id}/remove-background`, 'POST')).status, 503);
-    d.layers = [newLayer('image', { assetId: assets[0].id, x: 12.5, y: 30.25, width: 45, height: 30, rotation: 13.5 }), newLayer('text', { fontId: 'serif', text: '中文測試\nHello', fontSize: 8, x: 20, y: 80, height: 40 }), newLayer('uv', { shape: 'circle', x: 50, y: 140, width: 20, height: 20, opacity: 0.5 })];
+    d.layers = [newLayer('image', { assetId: assets[0].id, x: 12.5, y: 30.25, width: 45, height: 30, rotation: 13.5 }), newLayer('text', { fontId: 'mono', text: '中文測試\nHello', fontSize: 8, x: 20, y: 80, height: 40 }), newLayer('uv', { shape: 'circle', x: 50, y: 140, width: 20, height: 20, opacity: 0.5 })];
     const save = await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 }); assert.equal(save.status, 200);
+    const invalidFont = { ...d, layers: d.layers.map(layer => layer.kind === 'text' ? { ...layer, fontId: 'future-font' } : layer) };
+    const rejectedFont = await req(`/designs/${d.id}`, 'PUT', { design: invalidFont, baseRevision: 2 });
+    assert.equal(rejectedFont.status, 400);
+    assert.match((await rejectedFont.json()).error, /字體資料.*不相容/);
     assert.equal((await req(`/designs/${d.id}`, 'PUT', { design: d, baseRevision: 1 })).status, 409);
     assert.equal((await req(`/designs/${d.id}/confirm`, 'POST', { revision: 1 })).status, 409);
     assert.deepEqual((await (await req(`/designs/${d.id}`)).json()).design, d);
@@ -52,7 +58,7 @@ test('private upload → editable draft → immutable confirmation → complete 
     const studioOrders = await (await req('/studio/orders')).json(); assert.equal(studioOrders[0].id, v.id);
     const zip = unzip(Buffer.from(await (await req(`/versions/${v.id}/package.zip`)).arrayBuffer()));
     assert.deepEqual(JSON.parse(zip.get('design.json')!.toString()), d);
-    assert.ok(zip.has('fonts/NotoSerifTC.ttf')); assert.ok(zip.has('fonts/NotoSerifTC-OFL.txt'));
+    assert.ok(zip.has('fonts/SourceHanMonoTC-Regular.otf')); assert.ok(zip.has('fonts/SourceHanMono-LICENSE.md'));
     assert.deepEqual(zip.get(`originals/${assets[0].id}.png`), png);
     assert.deepEqual(zip.get(`originals/${assets[1].id}.jpg`), jpg);
     assert.deepEqual(zip.get(`originals/${assets[2].id}.webp`), webp);
@@ -91,7 +97,9 @@ test('private upload → editable draft → immutable confirmation → complete 
     assert.equal(JSON.parse(stackZip.get('manufacturing.json')!.toString()).printStack, 'cmyk-white-cmyk');
     assert.equal(JSON.parse(stackZip.get('design.json')!.toString()).layers.filter((l: any) => l.face === 'back').length, 2);
     const otherSession = await fetch(url + '/session', { method: 'POST' }); cookie = otherSession.headers.get('set-cookie')!.split(';')[0];
-    for (const route of [`/designs/${d.id}`, `/assets/${assets[0].id}`, `/versions/${v.id}`, `/versions/${v.id}/package.zip`]) assert.equal((await req(route)).status, 404);
+    for (const route of [`/designs/${d.id}`, `/assets/${assets[0].id}`, `/versions/${v.id}`]) assert.equal((await req(route)).status, 404);
+    assert.equal((await req(`/versions/${v.id}/package.zip`)).status, 200, 'an authenticated studio can retrieve the production package');
+    assert.equal((await fetch(`${url}/versions/${v.id}/package.zip`, { headers: { Cookie: cookie } })).status, 401, 'a customer session cannot retrieve the production package');
     assert.equal((await req(`/assets/${assets[0].id}`, 'DELETE')).status, 404);
     const badOrigin = await fetch(url + '/session', { method: 'POST', headers: { Origin: 'https://evil.example' } }); assert.equal(badOrigin.status, 403);
   } finally { await new Promise<void>(r => server.close(() => r())); await rm(root, { recursive: true, force: true }); }

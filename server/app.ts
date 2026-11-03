@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
 import { configuredStore, type StoreLike } from './store';
 import { customerPreview, fontPath, registerFont, render } from './render';
-import { fonts } from '../shared/fonts';
+import { fontIds, fonts } from '../shared/fonts';
 import { artCatalog } from '../shared/artwork';
 import { imageQualityIssues, MIN_IMAGE_PPI } from '../shared/print-quality';
 
@@ -124,7 +124,7 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (d.badgeAccessory === 'none' && d.slot?.enabled) throw new HttpError(400, '無配件款不可附帶孔槽');
     for (const l of d.layers) if (l.assetId) { const a = await ownedAsset(l.assetId, owner); if (a.designId !== d.id) throw new HttpError(400, '素材不屬於此設計'); }
   };
-  app.get('/api/config', (_req, res) => res.json({ templates: catalog, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024, directUpload: Boolean(store.createSignedUploadUrl) }));
+  app.get('/api/config', (_req, res) => res.json({ templates: catalog, fontIds, backgroundRemoval: Boolean(process.env.REMOVEBG_API_KEY), maxFileBytes: 20 * 1024 * 1024, directUpload: Boolean(store.createSignedUploadUrl) }));
   app.get('/api/font', (_req, res) => res.sendFile(fontPath));
   app.get('/api/designs', async (_req, res) => res.json((await store.list<Draft>('drafts')).filter(d => d.owner === res.locals.owner).map(d => ({ id: d.design.id, name: d.design.name, updatedAt: d.updatedAt }))));
   app.post('/api/designs', async (req, res) => {
@@ -383,7 +383,12 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (res.headersSent) return;
     const status = error instanceof z.ZodError || error instanceof multer.MulterError ? 400 : error.status || 500;
     if (status === 500) console.error(error);
-    res.status(status).json({ error: status === 500 ? '處理失敗，請稍後重試；設計及原圖仍保留' : error.message });
+    const message = error instanceof z.ZodError
+      ? error.issues.some(issue => issue.path.at(-1) === 'fontId')
+        ? '字體資料與目前伺服器版本不相容。請重新整理頁面；若仍出現，請重新啟動編輯器伺服器。'
+        : '資料格式未通過檢查，請確認目前商品的尺寸及編輯內容後重試。若持續發生，請使用「問題回饋」。'
+      : error.message;
+    res.status(status).json({ error: status === 500 ? '處理失敗，請稍後重試；設計及原圖仍保留' : message });
   });
   return app;
 }

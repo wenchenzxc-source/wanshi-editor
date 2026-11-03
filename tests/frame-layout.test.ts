@@ -7,7 +7,7 @@ import { layerSchema, newLayer } from '../shared/model';
 test('raster frames keep four corners square while only straight edge length changes', () => {
   const source = createCanvas(100, 100), sourceCtx = source.getContext('2d');
   sourceCtx.clearRect(0, 0, 100, 100);
-  sourceCtx.fillStyle = '#aa8800'; sourceCtx.fillRect(0, 8, 100, 2);
+  sourceCtx.fillStyle = '#aa8800'; sourceCtx.fillRect(0, 7, 100, 2);
   sourceCtx.fillStyle = '#008888'; sourceCtx.fillRect(0, 90, 100, 2);
   sourceCtx.fillStyle = '#884488'; sourceCtx.fillRect(8, 0, 2, 100);
   sourceCtx.fillStyle = '#448844'; sourceCtx.fillRect(90, 0, 2, 100);
@@ -27,7 +27,8 @@ test('raster frames keep four corners square while only straight edge length cha
   assert.deepEqual(pixel(199, 1), [0, 255, 0, 255]);
   assert.deepEqual(pixel(199, 299), [0, 0, 255, 255]);
   assert.deepEqual(pixel(1, 299), [255, 0, 255, 255]);
-  assert.deepEqual(pixel(100, 14), [170, 136, 0, 255]);
+  assert.equal(pixel(100, 0)[3], 0, 'the straight edge must stay inside the corner artwork');
+  assert.ok(Array.from({ length: 10 }, (_, offset) => pixel(100, 8 + offset)).some(([r, g, b, a]) => r > 120 && g > 80 && b < 20 && a > 0), 'the top edge must be visible between corners');
   assert.equal(pixel(100, 18)[3], 0);
   assert.equal(pixel(100, 150)[3], 0);
 });

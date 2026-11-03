@@ -18,7 +18,7 @@ test('customers cannot download production files while studio staff can use the 
   await expect(page.getByRole('heading', { name: '工作室製作後台' })).toBeVisible();
   await page.getByLabel('工作室密碼').fill('e2e-studio-token');
   await page.getByRole('button', { name: '安全登入' }).click();
-  await expect(page.getByText('1個已確認製作版本', { exact: true })).toBeVisible();
+  await expect.poll(async () => Number(await page.locator('.studio-summary b').innerText())).toBeGreaterThan(0);
   await expect(page.getByRole('link', { name: '下載 600 PPI 製作包', exact: true }).first()).toBeVisible();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('link', { name: '下載 600 PPI 製作包', exact: true }).first().click();

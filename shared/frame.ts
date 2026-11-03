@@ -35,7 +35,7 @@ export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, im
   // narrow, clean section of the source so no leaf or flower is stretched.
   const sx = sw * .46, sy = sh * .46;
   const short = Math.min(l.width, l.height);
-  // A source strip of 0.4% determines the physical stroke weight. Extending
+  // A narrow source strip determines the physical stroke weight. Extending
   // the side changes only strip length, never this cross-axis thickness.
   const edgeThickness = short * .004;
   const maxCorner = short * .48;
@@ -47,32 +47,38 @@ export function drawFrameImage(ctx: CanvasRenderingContext2D, l: DesignLayer, im
 
   // Each source needs a clean sample between its corner ornament and any
   // centre medallion. Sampling only 0.4% avoids stretching decorative objects.
-  const samples: Record<string, { x: number; y: number }> = {
-    'christmas-pine-frame': { x: .40, y: .42 },
-    'lunar-plum-frame': { x: .48, y: .48 },
-    'valentine-rose-frame': { x: .50, y: .48 },
-    'midautumn-osmanthus-frame': { x: .50, y: .48 },
+  // The source lines sit inside the transparent PNG, not on its outer edge.
+  // Positions were measured from the clean straight sections of each asset.
+  const samples: Record<string, { x: number; y: number; top: number; bottom: number; left: number; right: number }> = {
+    'christmas-pine-frame': { x: .40, y: .42, top: 85 / 1254, bottom: 84 / 1254, left: 61 / 1254, right: 59 / 1254 },
+    'lunar-plum-frame': { x: .48, y: .48, top: 70 / 1254, bottom: 72 / 1254, left: 45 / 1254, right: 47 / 1254 },
+    'valentine-rose-frame': { x: .50, y: .48, top: 89 / 1254, bottom: 83 / 1254, left: 53 / 1254, right: 52 / 1254 },
+    'midautumn-osmanthus-frame': { x: .50, y: .48, top: 133 / 1254, bottom: 115 / 1254, left: 80 / 1254, right: 79 / 1254 },
   };
-  const sample = samples[l.frameId || ''] || { x: .50, y: .50 };
+  const sample = samples[l.frameId || ''] || { x: .50, y: .50, top: .08, bottom: .08, left: .08, right: .08 };
   const stripW = Math.max(2, sw * .004), stripH = Math.max(2, sh * .004);
   const sampleX = Math.max(0, Math.min(sw - stripW, sw * sample.x - stripW / 2));
   const sampleY = Math.max(0, Math.min(sh - stripH, sh * sample.y - stripH / 2));
 
-  // Full-length strips sit beneath the corners. This removes seams when corner
-  // sizes differ and keeps edge thickness independent from all four controls.
-  draw(sampleX, 0, stripW, stripH, 0, 0, l.width, edgeThickness);
-  draw(sampleX, sh - stripH, stripW, stripH, 0, l.height - edgeThickness, l.width, edgeThickness);
-  draw(0, sampleY, stripW, stripH, 0, 0, edgeThickness, l.height);
-  draw(sw - stripW, sampleY, stripW, stripH, l.width - edgeThickness, 0, edgeThickness, l.height);
+  const topSource = sample.top * sh, bottomSource = sh - sample.bottom * sh - stripH;
+  const leftSource = sample.left * sw, rightSource = sw - sample.right * sw - stripW;
+  const topEdge = size() * sample.top / .46, bottomEdge = l.height - size() * sample.bottom / .46 - edgeThickness;
+  const leftEdge = size() * sample.left / .46, rightEdge = l.width - size() * sample.right / .46 - edgeThickness;
+  // Full-length strips sit beneath the corners at the same inset as the
+  // source artwork, so no isolated line appears at the page edge.
+  draw(sampleX, topSource, stripW, stripH, 0, topEdge, l.width, edgeThickness);
+  draw(sampleX, bottomSource, stripW, stripH, 0, bottomEdge, l.width, edgeThickness);
+  draw(leftSource, sampleY, stripW, stripH, leftEdge, 0, edgeThickness, l.height);
+  draw(rightSource, sampleY, stripW, stripH, rightEdge, 0, edgeThickness, l.height);
 
   // Keep any star, bead or small flower at the centre of each side as a
   // fixed-size overlay. It is never included in the stretched line sample.
   const centreSourceW = sw * .12, centreSourceH = sh * .12;
   const centreW = edgeThickness * centreSourceW / stripH, centreH = edgeThickness * centreSourceH / stripW;
-  draw((sw - centreSourceW) / 2, 0, centreSourceW, stripH, (l.width - centreW) / 2, 0, centreW, edgeThickness);
-  draw((sw - centreSourceW) / 2, sh - stripH, centreSourceW, stripH, (l.width - centreW) / 2, l.height - edgeThickness, centreW, edgeThickness);
-  draw(0, (sh - centreSourceH) / 2, stripW, centreSourceH, 0, (l.height - centreH) / 2, edgeThickness, centreH);
-  draw(sw - stripW, (sh - centreSourceH) / 2, stripW, centreSourceH, l.width - edgeThickness, (l.height - centreH) / 2, edgeThickness, centreH);
+  draw((sw - centreSourceW) / 2, topSource, centreSourceW, stripH, (l.width - centreW) / 2, topEdge, centreW, edgeThickness);
+  draw((sw - centreSourceW) / 2, bottomSource, centreSourceW, stripH, (l.width - centreW) / 2, bottomEdge, centreW, edgeThickness);
+  draw(leftSource, (sh - centreSourceH) / 2, stripW, centreSourceH, leftEdge, (l.height - centreH) / 2, edgeThickness, centreH);
+  draw(rightSource, (sh - centreSourceH) / 2, stripW, centreSourceH, rightEdge, (l.height - centreH) / 2, edgeThickness, centreH);
 
   draw(0, 0, sx, sy, 0, 0, tl, tl);
   draw(sw - sx, 0, sx, sy, l.width - tr, 0, tr, tr);

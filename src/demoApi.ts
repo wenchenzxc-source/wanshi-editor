@@ -1,5 +1,6 @@
 import { artCatalog } from '../shared/artwork';
 import { templates, type Asset, type Design } from '../shared/model';
+import { fontIds } from '../shared/fonts';
 import { ApiError } from './api';
 import { publicUrl, svgDataUrl } from './urls';
 
@@ -82,7 +83,7 @@ async function draftFor(id: string) {
 export async function demoApi<T>(url: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   if (url === '/session') return {} as T;
-  if (url === '/config') return { templates, backgroundRemoval: false } as T;
+  if (url === '/config') return { templates, fontIds, backgroundRemoval: false } as T;
   if (url === '/cart') return [] as T;
   if (url === '/designs' && method === 'GET') {
     return (await all<Draft>('drafts')).map(d => ({ id: d.design.id, name: d.design.name, updatedAt: d.updatedAt })) as T;
