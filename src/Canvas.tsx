@@ -31,6 +31,15 @@ type Marquee={start:SelectionPoint;end:SelectionPoint;add:boolean};
 type GroupDrag={id:string;startX:number;startY:number;original:Map<string,{x:number;y:number}>};
 type PinchZoom={id:string;startDistance:number;startLayer:DesignLayer;anchor:SelectionPoint;pending?:DesignLayer};
 export function EditorCanvas({ design, template, images, selected, select, commit, live, zoom, guides, disabled, paint, create, createBatch, replaceLayers, selectedIds, selectMany, liveMany, cropBox, setCropBox, photoAssetIds }: Props) {
+  const [coarsePointer, setCoarsePointer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
+  const [touchEditing, setTouchEditing] = useState(false);
+  const touchScroll = coarsePointer && !touchEditing;
+  useEffect(() => {
+    const query = window.matchMedia('(pointer: coarse)');
+    const sync = () => setCoarsePointer(query.matches);
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
   const [erased, setErased] = useState<DesignLayer[] | null>(null);
   const drawing = useRef<number[]>([]);
   const [ink, setInk] = useState<DesignLayer | null>(null);
@@ -88,9 +97,9 @@ export function EditorCanvas({ design, template, images, selected, select, commi
   useEffect(() => {
     if (bounded) proxyRef.current?.setAttrs({ x: px, y: py, width: pw, height: ph, rotation: 0, scaleX: 1, scaleY: 1 });
     const node = bounded ? proxyRef.current : selected ? nodes.current.get(selected) : null;
-    transformRef.current?.nodes(node && !currentPhoto && current?.visible && !current.locked && !disabled && !paint && !cropBox && !selectedIds.length ? [node] : []);
+    transformRef.current?.nodes(node && !touchScroll && !currentPhoto && current?.visible && !current.locked && !disabled && !paint && !cropBox && !selectedIds.length ? [node] : []);
     transformRef.current?.getLayer()?.batchDraw();
-  }, [selected, current, currentPhoto, disabled, paint, cropBox, selectedIds, bounded, px, py, pw, ph]);
+  }, [selected, current, currentPhoto, disabled, paint, cropBox, selectedIds, bounded, px, py, pw, ph, touchScroll]);
   function transformProxy(done = false) {
     const proxy = proxyRef.current;
     if (!proxy || !current) return;
@@ -189,14 +198,19 @@ export function EditorCanvas({ design, template, images, selected, select, commi
     if (handle.includes('s')) nextBottom = Math.min(current.height, Math.max(top + min, y));
     setCropBox({ x: left, y: top, width: nextRight - left, height: nextBottom - top });
   }
-  return <><div className="canvas-scroll" data-testid="editor-canvas" data-bounded-controls={bounded}>
-    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={beginMarquee} onTouchStart={e => { if (!beginPinch(e)) beginMarquee(e); }} onMouseMove={moveMarquee} onTouchMove={e => { if (!movePinch(e)) moveMarquee(e); }} onMouseUp={finishMarquee} onTouchEnd={e => { if (!finishPinch(e)) finishMarquee(); }}>
+  return <>{coarsePointer && <div className="mobile-canvas-controls" role="group" aria-label="手機畫布操作">
+    <button type="button" className={touchEditing ? 'active' : ''} aria-pressed={touchEditing} onClick={() => { setTouchEditing(!touchEditing); marqueeRef.current = null; setMarquee(null); pinchZoom.current = null; }}>
+      {touchEditing ? '完成編輯・滑動頁面' : '編輯畫布'}
+    </button>
+    <span aria-live="polite">{touchEditing ? '可拖曳圖層、使用筆刷與雙指縮放' : '在畫布上單指上下滑動頁面；點選圖層可查看設定'}</span>
+  </div>}<div className={`canvas-scroll${touchScroll ? ' touch-scroll-mode' : ''}`} data-testid="editor-canvas" data-bounded-controls={bounded}>
+    <div style={{ position: 'relative', width: stageW, height: stageH, margin: 'auto' }}><Stage width={stageW} height={stageH} onMouseDown={e => { if (!touchScroll) beginMarquee(e); }} onTouchStart={e => { if (!touchScroll && !beginPinch(e)) beginMarquee(e); }} onMouseMove={e => { if (!touchScroll) moveMarquee(e); }} onTouchMove={e => { if (!touchScroll && !movePinch(e)) moveMarquee(e); }} onMouseUp={() => { if (!touchScroll) finishMarquee(); }} onTouchEnd={e => { if (!touchScroll && !finishPinch(e)) finishMarquee(); }}>
       <Layer><Group x={pad * scale} y={pad * scale} scaleX={scale} scaleY={scale}>
         <Rect width={fullW} height={fullH} cornerRadius={radius} fill="#ffffff" shadowColor="#183d39" shadowBlur={12} shadowOpacity={0.12} listening={false}/>
         <Group clipFunc={ctx => { ctx.beginPath(); ctx._context.roundRect(0, 0, fullW, fullH, radius); }}>
           <Shape sceneFunc={ctx => drawSubstrate(ctx._context, design, fullW, fullH, template.presentation === 'acrylic-badge' ? 0.035 : 0.16)} listening={false}/>
           <Group x={b} y={b}>
-            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
+            {(erased || design.layers).map(l => <Shape key={l.id} ref={n => { if (n) nodes.current.set(l.id, n); else nodes.current.delete(l.id); }} id={l.id} x={l.x} y={l.y} width={l.width} height={l.height} rotation={l.rotation} visible={l.visible} draggable={!touchScroll && !cropBox && !l.locked && !disabled && !paint} listening={!l.locked && !disabled && !paint}
               sceneFunc={ctx => drawLayer(ctx._context, l, images.get(l.assetId || ''), 'preview', scale)}
               hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, l.width, l.height); ctx.closePath(); ctx.fillStrokeShape(shape); }}
               onClick={e => { if(e.evt.shiftKey && !isPhoto(l))selectMany([...new Set([...selectedIds,l.id])]);else{selectMany([]);select(l.id);} }} onTap={() => {selectMany([]);select(l.id);}} onDragStart={e => {
@@ -217,11 +231,11 @@ export function EditorCanvas({ design, template, images, selected, select, commi
               <Rect x={0} y={cropBox.y + cropBox.height} width={current.width} height={Math.max(0, current.height - cropBox.y - cropBox.height)} fill="#10201c99" listening={false}/>
               <Rect x={0} y={cropBox.y} width={cropBox.x} height={cropBox.height} fill="#10201c99" listening={false}/>
               <Rect x={cropBox.x + cropBox.width} y={cropBox.y} width={Math.max(0, current.width - cropBox.x - cropBox.width)} height={cropBox.height} fill="#10201c99" listening={false}/>
-              <Rect x={cropBox.x} y={cropBox.y} width={cropBox.width} height={cropBox.height} fill="rgba(255,255,255,0.001)" stroke="#ffffff" strokeWidth={Math.max(.35, 1.5 / scale)} draggable
+              <Rect x={cropBox.x} y={cropBox.y} width={cropBox.width} height={cropBox.height} fill="rgba(255,255,255,0.001)" stroke="#ffffff" strokeWidth={Math.max(.35, 1.5 / scale)} draggable={!touchScroll}
                 dragBoundFunc={pos => ({ x: Math.max(0, Math.min(current.width - cropBox.width, pos.x)), y: Math.max(0, Math.min(current.height - cropBox.height, pos.y)) })}
                 onDragMove={e => setCropBox?.({ ...cropBox, x: e.target.x(), y: e.target.y() })}/>
               {[1 / 3, 2 / 3].flatMap(n => [<Line key={`v${n}`} points={[cropBox.x + cropBox.width * n, cropBox.y, cropBox.x + cropBox.width * n, cropBox.y + cropBox.height]} stroke="#ffffff99" strokeWidth={Math.max(.2, .7 / scale)} listening={false}/>, <Line key={`h${n}`} points={[cropBox.x, cropBox.y + cropBox.height * n, cropBox.x + cropBox.width, cropBox.y + cropBox.height * n]} stroke="#ffffff99" strokeWidth={Math.max(.2, .7 / scale)} listening={false}/>])}
-              {cropHandles.map(([handle, x, y]) => <Rect key={handle} x={x} y={y} offsetX={Math.max(1.3, 5 / scale)} offsetY={Math.max(1.3, 5 / scale)} width={Math.max(2.6, 10 / scale)} height={Math.max(2.6, 10 / scale)} fill="#ffffff" stroke="#173f36" strokeWidth={Math.max(.25, 1 / scale)} draggable
+              {cropHandles.map(([handle, x, y]) => <Rect key={handle} x={x} y={y} offsetX={Math.max(1.3, 5 / scale)} offsetY={Math.max(1.3, 5 / scale)} width={Math.max(2.6, 10 / scale)} height={Math.max(2.6, 10 / scale)} fill="#ffffff" stroke="#173f36" strokeWidth={Math.max(.25, 1 / scale)} draggable={!touchScroll}
                 onDragMove={e => resizeCrop(handle, e.target.x(), e.target.y())}/>) }
             </Group>}
           </Group>
@@ -246,7 +260,7 @@ export function EditorCanvas({ design, template, images, selected, select, commi
         }}/>
       </Group></Layer>
     </Stage>
-    {paint && !disabled && <div aria-label="繪畫區" style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'crosshair' }}
+    {paint && !disabled && !touchScroll && <div aria-label="繪畫區" style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'crosshair' }}
       onPointerDown={e => {
         const rect = e.currentTarget.getBoundingClientRect(), x = (e.clientX - rect.left) / scale - pad - b, y = (e.clientY - rect.top) / scale - pad - b;
         if (x < 0 || y < 0 || x > w || y > h) return;

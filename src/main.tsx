@@ -15,6 +15,7 @@ import { PhotoHolderOptions, defaultPhotoHolder } from './PhotoHolder';
 import { dimensions, fitFrames, emptyDesign, newLayer, materials, supportsDuplex, withPrintStack, stackLabel, resolveTemplate, badgeAccessories, badgeRadius, photoImageArea, type Material, type Asset, type Design, type DesignLayer, type Template, type VersionInfo } from '../shared/model';
 import './styles.css';
 import './studio.css';
+import './mobile-canvas.css';
 import { ArtLibrary } from './ArtLibrary';
 import { isFontLoaded, loadFont } from './fontLoader';
 import { CornerPanel, cornerCrop, cornerPositions, type CornerPosition } from './CornerPanel';
