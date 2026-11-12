@@ -2,10 +2,10 @@ import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { drawDesign, FONT, type RenderMode } from '../shared/draw';
-import { dimensions, type Design, type Template, type Asset } from '../shared/model';
-import type { StoreLike } from './store';
-import { fonts } from '../shared/fonts';
+import { drawDesign, FONT, type RenderMode } from '../shared/draw.js';
+import { dimensions, type Design, type Template, type Asset } from '../shared/model.js';
+import type { StoreLike } from './store.js';
+import { fonts } from '../shared/fonts.js';
 export const fontPath = fileURLToPath(new URL('../public/fonts/NotoSansTC.ttf', import.meta.url));
 export function registerFont() { for (const font of fonts) { const file = path.join(path.dirname(fontPath), font.file); if (!GlobalFonts.registerFromPath(file, font.family)) throw new Error('Missing bundled font: ' + font.file); } }
 export async function render(d: Design, t: Template, assets: Asset[], store: StoreLike, mode: RenderMode, bleed = true) {

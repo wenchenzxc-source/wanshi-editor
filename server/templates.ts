@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { templates, type Template } from '../shared/model';
-import { PRINT_OUTPUT_PPI } from '../shared/print-quality';
+import { templates, type Template } from '../shared/model.js';
+import { PRINT_OUTPUT_PPI } from '../shared/print-quality.js';
 const templateSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/), name: z.string().min(1), version: z.number().int().positive(),
   widthMm: z.number().min(10).max(600), heightMm: z.number().min(10).max(600),

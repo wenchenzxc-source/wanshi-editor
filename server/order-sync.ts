@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { driveConfigFromEnv, GoogleDriveClient, syncPaidOrder, type DriveJob, type PaidOrderLine } from './drive';
-import type { StoreLike } from './store';
+import { driveConfigFromEnv, GoogleDriveClient, syncPaidOrder, type DriveJob, type PaidOrderLine } from './drive.js';
+import type { StoreLike } from './store.js';
 
 const versionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

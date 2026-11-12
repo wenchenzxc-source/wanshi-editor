@@ -1,4 +1,4 @@
-import { newLayer, type DesignLayer } from './model';
+import { newLayer, type DesignLayer } from './model.js';
 
 type ScatterOptions = {
   x: number; y: number; spreadW: number; spreadH: number;

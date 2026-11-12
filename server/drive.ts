@@ -1,5 +1,5 @@
-import type { Asset, Design, Template } from '../shared/model';
-import type { StoreLike } from './store';
+import type { Asset, Design, Template } from '../shared/model.js';
+import type { StoreLike } from './store.js';
 
 export type PaidOrderLine = { orderItemId: number; productId: number; versionId: string };
 export type DriveJob = {

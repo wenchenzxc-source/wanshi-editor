@@ -6,14 +6,14 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model';
-import { configuredStore, type StoreLike } from './store';
-import { customerPreview, fontPath, registerFont, render } from './render';
-import { fontIds, fonts } from '../shared/fonts';
-import { artCatalog } from '../shared/artwork';
-import { imageQualityIssues, MIN_IMAGE_PPI } from '../shared/print-quality';
-import { enqueueDriveJob, paidWooCommerceOrder, runDriveJob, runNextDriveJob } from './order-sync';
-import type { DriveJob } from './drive';
+import { designSchema, templates, resolveTemplate, fitFrames, dimensions, photoImageArea, slotGeometry, badgeRadius, badgeAccessories, type Design, type Template, type Asset } from '../shared/model.js';
+import { configuredStore, type StoreLike } from './store.js';
+import { customerPreview, fontPath, registerFont, render } from './render.js';
+import { fontIds, fonts } from '../shared/fonts.js';
+import { artCatalog } from '../shared/artwork.js';
+import { imageQualityIssues, MIN_IMAGE_PPI } from '../shared/print-quality.js';
+import { enqueueDriveJob, paidWooCommerceOrder, runDriveJob, runNextDriveJob } from './order-sync.js';
+import type { DriveJob } from './drive.js';
 
 type PrivateAsset = Asset & { owner: string };
 type Draft = { owner: string; design: Design; revision: number; updatedAt: string };

@@ -1,4 +1,4 @@
-import { newLayer, type DesignLayer } from './model';
+import { newLayer, type DesignLayer } from './model.js';
 const poses = ['open', 'tilted', 'edge', 'curled'] as const;
 /** Randomness is resolved only on insertion; saved layers render deterministically. */
 export function scatterPetals(cx: number, cy: number, spreadW: number, spreadH: number, size: number, count: number, flower: 'sakura' | 'rose', opacity: number, pageW = spreadW, pageH = spreadH, random = Math.random): DesignLayer[] {

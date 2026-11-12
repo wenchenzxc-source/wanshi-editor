@@ -1,10 +1,10 @@
 // Original artwork authored or generated for Wanshi. No third-party images or fonts.
 // Permission: use, modify and reproduce commercially within Wanshi designs/products.
-import { everydayArtwork } from './everydayArtwork';
-import { holidayArtwork } from './holidayArtwork';
-import { journalArtwork } from './journalArtwork';
-import { motifArtwork, motifTypes } from './motifArtwork';
-export { motifTypes } from './motifArtwork';
+import { everydayArtwork } from './everydayArtwork.js';
+import { holidayArtwork } from './holidayArtwork.js';
+import { journalArtwork } from './journalArtwork.js';
+import { motifArtwork, motifTypes } from './motifArtwork.js';
+export { motifTypes } from './motifArtwork.js';
 export const holidayCategories = ['聖誕節', '農曆新年', '情人節', '中秋節', '萬聖節'] as const;
 export const artCategories = ['全部', '花瓣', '植物花草', '手繪小物', '手帳貼紙', '圖騰紋樣', ...motifTypes, '小動物', '表情符號', '生活小物', '光影星芒', '動漫用語', '節慶', ...holidayCategories, '圖框'] as const;
 const svg = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 100 100"><defs><radialGradient id="glow"><stop stop-color="#f4d59b"/><stop offset=".18" stop-color="#ecc681" stop-opacity=".8"/><stop offset=".55" stop-color="#f3d99f" stop-opacity=".16"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient><linearGradient id="petal" x2=".8" y2="1"><stop stop-color="#fff2ef"/><stop offset=".5" stop-color="#f4b5be"/><stop offset="1" stop-color="#d97699"/></linearGradient></defs>${body}</svg>`;

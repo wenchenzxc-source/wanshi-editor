@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { fontIds } from './fonts';
-import { quoteStyleIds } from './quotes';
+import { fontIds } from './fonts.js';
+import { quoteStyleIds } from './quotes.js';
 
 const color = z.string().regex(/^#[0-9a-f]{6}$/i);
 export const materials = { clear: { name: '透明壓克力', color: '#ecf4f5' }, black: { name: '黑', color: '#171b1d' }, white: { name: '白', color: '#ffffff' }, iridescent: { name: '炫彩', color: '#d4e8f0' }, gold: { name: '金', color: '#c9a653' }, silver: { name: '銀', color: '#c1c7cd' }, roseGold: { name: '玫瑰金', color: '#d5a092' } };

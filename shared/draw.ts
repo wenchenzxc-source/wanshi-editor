@@ -1,6 +1,6 @@
-import { drawFloatingPetal } from './petals';
-import { screenTearBands } from './screenTear';
-import { dimensions, materials, slotGeometry, badgeRadius, photoImageArea, type Design, type DesignLayer, type Template } from './model';
+import { drawFloatingPetal } from './petals.js';
+import { screenTearBands } from './screenTear.js';
+import { dimensions, materials, slotGeometry, badgeRadius, photoImageArea, type Design, type DesignLayer, type Template } from './model.js';
 export function drawSubstrate(ctx: CanvasRenderingContext2D, d: Design, w: number, h: number, clearOpacity = 0.16) {
   ctx.save();
   if (!d.material) { ctx.globalAlpha = d.backgroundOpacity; ctx.fillStyle = d.background; }
@@ -56,9 +56,9 @@ export function drawPhotoBorder(ctx: CanvasRenderingContext2D, d: Design, t: Tem
   ctx.fillRect(0, area.y, area.x, area.height); ctx.fillRect(area.x + area.width, area.y, w - area.x - area.width, area.height);
   ctx.restore();
 }
-import { getFont } from './fonts';
-import { drawQuoteFrame, quoteInsets } from './quotes';
-import { drawFrame, drawFrameImage } from './frame';
+import { getFont } from './fonts.js';
+import { drawQuoteFrame, quoteInsets } from './quotes.js';
+import { drawFrame, drawFrameImage } from './frame.js';
 export const FONT = 'Wanshi Sans';
 export function textFont(layer: DesignLayer, size = layer.fontSize || 10) {
   const style = layer.fontStyle === 'italic' ? 'italic ' : '';
