@@ -25,8 +25,12 @@ test('Supabase store keeps metadata private and uses signed storage URLs', async
     assert.equal((await store.createSignedUploadUrl('files', 'asset')).signedUrl, 'https://project.supabase.co/storage/v1/object/upload/sign/wanshi-private/files/asset.bin?token=upload-token');
     assert.equal(await store.signedDownloadUrl('files', 'asset'), 'https://project.supabase.co/storage/v1/object/sign/wanshi-private/files/asset.bin?token=download-token');
     assert.equal(await store.compareAndSwapDraft('draft-id', 'owner', 2, { revision: 3 }), true);
-    assert.ok(calls.every(call => (call.init?.headers as Record<string, string> | undefined)?.Authorization === 'Bearer sb_secret_test'));
+    assert.ok(calls.every(call => (call.init?.headers as Record<string, string> | undefined)?.apikey === 'sb_secret_test'));
+    assert.ok(calls.every(call => !(call.init?.headers as Record<string, string> | undefined)?.Authorization));
     assert.ok(calls.some(call => call.url.includes('/rest/v1/wanshi_objects')));
     assert.ok(calls.some(call => call.url.includes('/storage/v1/object/upload/sign/')));
+    const legacy = new SupabaseStore('https://project.supabase.co', 'legacy-service-role-jwt');
+    await legacy.init();
+    assert.equal((calls.at(-1)?.init?.headers as Record<string, string>).Authorization, 'Bearer legacy-service-role-jwt');
   } finally { globalThis.fetch = originalFetch; }
 });

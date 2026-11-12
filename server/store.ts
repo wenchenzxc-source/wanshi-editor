@@ -75,7 +75,9 @@ export class SupabaseStore implements StoreLike {
   constructor(private url: string, private secret: string, private storageBucket = 'wanshi-private') {
     this.url = url.replace(/\/$/, ''); this.rest = `${this.url}/rest/v1`; this.storage = `${this.url}/storage/v1`;
   }
-  private headers(extra: Record<string, string> = {}) { return { apikey: this.secret, Authorization: `Bearer ${this.secret}`, ...extra }; }
+  private headers(extra: Record<string, string> = {}) {
+    return { apikey: this.secret, ...(!this.secret.startsWith('sb_secret_') ? { Authorization: `Bearer ${this.secret}` } : {}), ...extra };
+  }
   private objectPath(bucket: string, id: string, ext = 'bin') { validateKey(bucket, id, ext); return `${bucket}/${id}.${ext}`; }
   private async checked(response: Response) {
     if (response.ok) return response;
