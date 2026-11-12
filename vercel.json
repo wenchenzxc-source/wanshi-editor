@@ -6,7 +6,7 @@
   "crons": [{ "path": "/api/cron/drive-jobs", "schedule": "0 0 * * *" }],
   "functions": {
     "api/[...path].ts": {
-      "includeFiles": ["public/fonts/**", "public/artwork/**"],
+      "includeFiles": "public/{fonts,artwork}/**",
       "maxDuration": 300
     }
   }
