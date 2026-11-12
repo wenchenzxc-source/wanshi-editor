@@ -12,6 +12,8 @@ import { customerPreview, fontPath, registerFont, render } from './render';
 import { fontIds, fonts } from '../shared/fonts';
 import { artCatalog } from '../shared/artwork';
 import { imageQualityIssues, MIN_IMAGE_PPI } from '../shared/print-quality';
+import { enqueueDriveJob, paidWooCommerceOrder, runDriveJob, runNextDriveJob } from './order-sync';
+import type { DriveJob } from './drive';
 
 type PrivateAsset = Asset & { owner: string };
 type Draft = { owner: string; design: Design; revision: number; updatedAt: string };
@@ -22,27 +24,28 @@ const idSchema = z.string().uuid();
 const previewBytes = async (bytes: Buffer, protectedArtwork = false) => protectedArtwork
   ? sharp(await customerPreview(bytes)).webp({ quality: 86 }).toBuffer()
   : sharp(bytes).rotate().resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 86 }).toBuffer();
-export async function createApp(dataDir: string, options: { templates?: Template[]; store?: StoreLike; studioToken?: string } = {}) {
+export async function createApp(dataDir: string, options: { templates?: Template[]; store?: StoreLike; studioToken?: string; background?: (task: Promise<unknown>) => void } = {}) {
   const app = express(), store = options.store || configuredStore(dataDir), catalog = options.templates || templates;
   const studioToken = options.studioToken ?? process.env.STUDIO_ADMIN_TOKEN;
-  const studioSessions = new Map<string, number>();
-  const tokenMatches = (candidate?: string) => {
-    if (!studioToken || !candidate) return false;
-    const expected = Buffer.from(studioToken), actual = Buffer.from(candidate);
+  const tokenMatchesFor = (candidate: string | undefined, secret: string | undefined) => {
+    if (!secret || !candidate) return false;
+    const expected = Buffer.from(secret), actual = Buffer.from(candidate);
     return expected.length === actual.length && timingSafeEqual(expected, actual);
   };
-  const hasStudioAccess = (req: express.Request) => {
+  const tokenMatches = (candidate?: string) => tokenMatchesFor(candidate, studioToken);
+  const hasStudioAccess = async (req: express.Request) => {
     if (tokenMatches(req.get('x-studio-token'))) return true;
     const id = req.headers.cookie?.match(/(?:^|; )wanshi_studio=([a-f0-9]{64})(?:;|$)/)?.[1];
-    const expires = id ? studioSessions.get(id) : undefined;
-    if (id && expires && expires > Date.now()) return true;
-    if (id) studioSessions.delete(id);
-    return false;
+    if (!id) return false;
+    const session = await store.get<{ expiresAt: number; tokenHash: string }>('studio-sessions', hash(id));
+    return Boolean(session && session.expiresAt > Date.now() && session.tokenHash === hash(studioToken || ''));
   };
-  const requireStudio: express.RequestHandler = (req, _res, next) => {
+  const requireStudio: express.RequestHandler = async (req, _res, next) => {
     if (!studioToken) return next(new HttpError(503, '工作室後台尚未設定 STUDIO_ADMIN_TOKEN'));
-    if (!hasStudioAccess(req)) return next(new HttpError(401, '請先登入工作室後台'));
-    next();
+    try {
+      if (!await hasStudioAccess(req)) return next(new HttpError(401, '請先登入工作室後台'));
+      next();
+    } catch (error) { next(error); }
   };
   await store.init(); registerFont();
   app.disable('x-powered-by');
@@ -55,19 +58,45 @@ export async function createApp(dataDir: string, options: { templates?: Template
     }
     next();
   });
+  app.post('/api/integrations/woocommerce/webhook', express.raw({ type: 'application/json', limit: '2mb' }), async (req, res) => {
+    const secret = process.env.WOOCOMMERCE_WEBHOOK_SECRET;
+    if (!secret) throw new HttpError(503, 'WooCommerce Webhook 尚未設定');
+    if (!Buffer.isBuffer(req.body)) throw new HttpError(400, 'Webhook 內容格式錯誤');
+    let job: DriveJob | null;
+    try { job = paidWooCommerceOrder(req.body, req.get('x-wc-webhook-signature'), secret, req.get('x-wc-webhook-topic')); }
+    catch { throw new HttpError(401, 'WooCommerce Webhook 驗證失敗'); }
+    if (!job) return res.json({ ok: true, queued: false });
+    for (const line of job.lines) {
+      const version = await store.get<Snapshot>('versions', line.versionId);
+      if (!version || version.design.wooCommerceProductId && version.design.wooCommerceProductId !== line.productId) throw new HttpError(422, 'WooCommerce 訂單的商品與確認版本不相符');
+    }
+    const queued = await enqueueDriveJob(store, job);
+    if (queued.created && options.background) options.background(runDriveJob(store, job.id).catch(error => { console.error('Google Drive 訂單同步失敗', error); }));
+    res.status(202).json({ ok: true, queued: queued.job.status !== 'complete', orderId: job.orderId });
+  });
+  app.get('/api/cron/drive-jobs', async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    if (!secret || !req.get('authorization') || !tokenMatchesFor(req.get('authorization')!.replace(/^Bearer /, ''), secret)) throw new HttpError(401, '排程驗證失敗');
+    if (options.background) {
+      options.background(runNextDriveJob(store).catch(error => { console.error('Google Drive 排程同步失敗', error); }));
+      return res.json({ ok: true, started: true });
+    }
+    const result = await runNextDriveJob(store);
+    res.json({ ok: true, orderId: result?.orderId || null });
+  });
   app.use(express.json({ limit: '2mb' }));
-  app.post('/api/studio/login', (req, res, next) => {
+  app.post('/api/studio/login', async (req, res, next) => {
     const input = z.object({ token: z.string().min(1).max(500) }).parse(req.body);
     if (!studioToken) return next(new HttpError(503, '工作室後台尚未設定 STUDIO_ADMIN_TOKEN'));
     if (!tokenMatches(input.token)) return next(new HttpError(401, '工作室密碼錯誤'));
     const id = randomBytes(32).toString('hex'), maxAge = 12 * 60 * 60 * 1000;
-    studioSessions.set(id, Date.now() + maxAge);
+    await store.put('studio-sessions', hash(id), { expiresAt: Date.now() + maxAge, tokenHash: hash(studioToken) }, true);
     res.cookie('wanshi_studio', id, { httpOnly: true, sameSite: 'strict', secure: process.env.COOKIE_SECURE === 'true', maxAge, path: '/' });
     res.json({ ok: true });
   });
-  app.post('/api/studio/logout', requireStudio, (req, res) => {
+  app.post('/api/studio/logout', requireStudio, async (req, res) => {
     const id = req.headers.cookie?.match(/(?:^|; )wanshi_studio=([a-f0-9]{64})(?:;|$)/)?.[1];
-    if (id) studioSessions.delete(id);
+    if (id) await store.put('studio-sessions', hash(id), { expiresAt: 0 });
     res.clearCookie('wanshi_studio', { path: '/' }); res.json({ ok: true });
   });
   app.get('/api/health', (_req, res) => res.json({ ok: true, apiVersion: 'image-adjustments-v19' }));
@@ -279,6 +308,20 @@ export async function createApp(dataDir: string, options: { templates?: Template
     if (!v) throw new HttpError(404, '找不到確認版本'); return v;
   };
   app.get('/api/studio/status', requireStudio, (_req, res) => res.json({ ok: true, storage: store.signedDownloadUrl ? 'private-cloud' : 'private-local' }));
+  app.get('/api/studio/drive-jobs', requireStudio, async (_req, res) => {
+    const jobs = await store.list<DriveJob>('drive-jobs');
+    res.json(jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  });
+  app.post('/api/studio/drive-jobs/:id/retry', requireStudio, async (req, res) => {
+    const id = String(req.params.id);
+    if (!/^wc-[0-9]+$/.test(id)) throw new HttpError(400, '訂單編號無效');
+    const job = await store.get<DriveJob>('drive-jobs', id);
+    if (!job) throw new HttpError(404, '找不到同步工作');
+    if (job.status === 'complete') return res.json(job);
+    if (job.status === 'working' && (job.leaseUntil || 0) > Date.now()) throw new HttpError(409, '訂單正在同步');
+    await store.put('drive-jobs', id, { ...job, status: 'queued', nextRetryAt: 0 });
+    res.json(await runDriveJob(store, id));
+  });
   app.get('/api/studio/orders', requireStudio, async (_req, res) => {
     const rows = (await store.list<Snapshot>('versions')).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(v => ({
       id: v.id, createdAt: v.createdAt, revision: v.revision, designId: v.design.id, name: v.design.name,

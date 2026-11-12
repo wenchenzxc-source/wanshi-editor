@@ -25,6 +25,25 @@ function unzip(b: Buffer) {
     result.set(name, method === 8 ? inflateRawSync(data) : data); offset += 46 + nameLen + extra + comment;
   } return result;
 }
+test('studio login remains valid across serverless instances and logout revokes it', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'wanshi-studio-session-'));
+  const first = (await createApp(root, { studioToken: 'test-studio-token' })).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => first.once('listening', resolve));
+  const second = (await createApp(root, { studioToken: 'test-studio-token' })).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => second.once('listening', resolve));
+  const url = (server: typeof first) => `http://127.0.0.1:${(server.address() as any).port}/api`;
+  try {
+    const login = await fetch(`${url(first)}/studio/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: 'test-studio-token' }) });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    assert.equal((await fetch(`${url(second)}/studio/status`, { headers: { Cookie: cookie } })).status, 200);
+    assert.equal((await fetch(`${url(second)}/studio/logout`, { method: 'POST', headers: { Cookie: cookie } })).status, 200);
+    assert.equal((await fetch(`${url(first)}/studio/status`, { headers: { Cookie: cookie } })).status, 401);
+  } finally {
+    await Promise.all([first, second].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('private upload → editable draft → immutable confirmation → complete production ZIP', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'wanshi-test-')), app = await createApp(root, { studioToken: 'test-studio-token' }), server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r)); const url = `http://127.0.0.1:${(server.address() as any).port}/api`;

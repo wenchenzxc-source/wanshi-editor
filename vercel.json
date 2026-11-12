@@ -3,6 +3,7 @@
   "framework": "vite",
   "buildCommand": "pnpm build",
   "outputDirectory": "dist",
+  "crons": [{ "path": "/api/cron/drive-jobs", "schedule": "0 0 * * *" }],
   "functions": {
     "api/[...path].ts": {
       "includeFiles": ["public/fonts/**", "public/artwork/**"],

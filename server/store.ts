@@ -15,6 +15,7 @@ export interface StoreLike {
   createSignedUploadUrl?(bucket: string, id: string, ext?: string): Promise<SignedUpload>;
   signedDownloadUrl?(bucket: string, id: string, ext?: string, expiresIn?: number): Promise<string>;
   compareAndSwapDraft?(id: string, owner: string, baseRevision: number, value: unknown): Promise<boolean>;
+  claimDriveJob<T extends { status: string; leaseUntil?: number; nextRetryAt?: number; attempts?: number }>(id: string, leaseMs: number): Promise<T | null>;
 }
 
 function validateKey(bucket: string, id: string, ext = 'json') {
@@ -24,7 +25,7 @@ function validateKey(bucket: string, id: string, ext = 'json') {
 export class Store implements StoreLike {
   constructor(public root: string) {}
   file(bucket: string, id: string, ext = 'json') { validateKey(bucket, id, ext); return path.join(this.root, bucket, `${id}.${ext}`); }
-  async init() { for (const b of ['drafts', 'versions', 'assets', 'files', 'sessions', 'carts', 'upload-intents']) await mkdir(path.join(this.root, b), { recursive: true }); }
+  async init() { for (const b of ['drafts', 'versions', 'assets', 'files', 'sessions', 'studio-sessions', 'carts', 'upload-intents', 'drive-jobs']) await mkdir(path.join(this.root, b), { recursive: true }); }
   async get<T>(bucket: string, id: string): Promise<T | null> {
     try { return JSON.parse(await readFile(this.file(bucket, id), 'utf8')); }
     catch (e: any) { if (e.code === 'ENOENT') return null; throw e; }
@@ -50,6 +51,15 @@ export class Store implements StoreLike {
   async readBlob(bucket: string, id: string, ext = 'bin') { return readFile(this.file(bucket, id, ext)); }
   async writeBlob(bucket: string, id: string, ext: string, bytes: Buffer, immutable = false) { await writeFile(this.file(bucket, id, ext), bytes, immutable ? { flag: 'wx' } : undefined); }
   async deleteBlob(bucket: string, id: string, ext = 'bin') { await unlink(this.file(bucket, id, ext)).catch((e: any) => { if (e.code !== 'ENOENT') throw e; }); }
+  async claimDriveJob<T extends { status: string; leaseUntil?: number; nextRetryAt?: number; attempts?: number }>(id: string, leaseMs: number): Promise<T | null> {
+    return this.exclusive(`drive-job-${id}`, async () => {
+      const job = await this.get<T>('drive-jobs', id), now = Date.now();
+      if (!job || !(['queued', 'failed'].includes(job.status) && (job.nextRetryAt || 0) <= now || job.status === 'working' && (job.leaseUntil || 0) < now)) return null;
+      const claimed = { ...job, status: 'working', leaseUntil: now + leaseMs, attempts: (job.attempts || 0) + 1 } as T;
+      await this.put('drive-jobs', id, claimed);
+      return claimed;
+    });
+  }
   private queues = new Map<string, Promise<unknown>>();
   async exclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.queues.get(id) || Promise.resolve();
@@ -85,8 +95,13 @@ export class SupabaseStore implements StoreLike {
   }
   async list<T>(bucket: string): Promise<T[]> {
     validateKey(bucket, 'list');
-    const response = await this.checked(await fetch(`${this.rest}/wanshi_objects?bucket=eq.${encodeURIComponent(bucket)}&select=value`, { headers: this.headers({ Range: '0-9999' }) }));
-    return (await response.json() as { value: T }[]).map(row => row.value);
+    const values: T[] = [], pageSize = 1000;
+    for (let start = 0; ; start += pageSize) {
+      const response = await this.checked(await fetch(`${this.rest}/wanshi_objects?bucket=eq.${encodeURIComponent(bucket)}&select=value&order=id.asc`, { headers: this.headers({ Range: `${start}-${start + pageSize - 1}` }) }));
+      const rows = await response.json() as { value: T }[];
+      values.push(...rows.map(row => row.value));
+      if (rows.length < pageSize) return values;
+    }
   }
   async readBlob(bucket: string, id: string, ext = 'bin') {
     const key = this.objectPath(bucket, id, ext);
@@ -118,6 +133,10 @@ export class SupabaseStore implements StoreLike {
   async compareAndSwapDraft(id: string, owner: string, baseRevision: number, value: unknown) {
     const response = await this.checked(await fetch(`${this.rest}/rpc/wanshi_compare_and_swap`, { method: 'POST', headers: this.headers({ 'Content-Type': 'application/json' }), body: JSON.stringify({ p_id: id, p_owner: owner, p_base_revision: baseRevision, p_value: value }) }));
     return Boolean(await response.json());
+  }
+  async claimDriveJob<T extends { status: string; leaseUntil?: number; nextRetryAt?: number; attempts?: number }>(id: string, leaseMs: number): Promise<T | null> {
+    const response = await this.checked(await fetch(`${this.rest}/rpc/wanshi_claim_drive_job`, { method: 'POST', headers: this.headers({ 'Content-Type': 'application/json' }), body: JSON.stringify({ p_id: id, p_lease_ms: leaseMs }) }));
+    return await response.json() as T | null;
   }
   async exclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.queues.get(id) || Promise.resolve(); const next = prev.catch(() => {}).then(fn); this.queues.set(id, next);

@@ -16,9 +16,9 @@ React + TypeScript + React Konva 編輯器，搭配 Express 私有 API。此專�
 
 ## Vercel + Supabase 正式部署
 
-專案已支援以 Vercel 部署前端及 Express API，並以 Supabase Postgres 保存草稿／版本／購物車、Supabase 私有 Storage 保存原圖與製作檔。未設定 Supabase 時，本機開發仍使用 `data/`，不受影響。
+專案已支援以 Vercel 部署前端及 Express API，並以 Supabase Postgres 保存草稿／版本／購物車／同步工作、Supabase 私有 Storage 保存原圖與製作檔。未設定 Supabase 時，本機開發仍使用 `data/`，不受影響。只有確認版本在 WooCommerce 標記付款完成後，才會將製作檔同步至指定的私人 Google Drive 資料夾。
 
-1. 在 Supabase 建立專案，開啟 SQL Editor，執行 [`supabase/migrations/20261022000000_wanshi_storage.sql`](supabase/migrations/20261022000000_wanshi_storage.sql)。這會建立私有 `wanshi-private` bucket 與只允許伺服器 secret key 存取的資料表。
+1. 在 Supabase 建立專案，開啟 SQL Editor，依序執行 [`20261022000000_wanshi_storage.sql`](supabase/migrations/20261022000000_wanshi_storage.sql) 與 [`20261112000000_drive_jobs.sql`](supabase/migrations/20261112000000_drive_jobs.sql)。這會建立私有 `wanshi-private` bucket、只允許伺服器 secret key 存取的資料表，以及同步工作領取函式。
 2. 在 Vercel 匯入這個 GitHub repository。專案會讀取 `vercel.json`，執行 `pnpm build`，並把 `api/[...path].ts` 部署為 Node.js Function。
 3. 在 Vercel Project Settings → Environment Variables 設定：
 
@@ -27,9 +27,20 @@ React + TypeScript + React Konva 編輯器，搭配 Express 私有 API。此專�
    SUPABASE_SECRET_KEY=sb_secret_...
    SUPABASE_STORAGE_BUCKET=wanshi-private
    COOKIE_SECURE=true
+   STUDIO_ADMIN_TOKEN=至少32字元的隨機密碼
+   CRON_SECRET=另一組長隨機密碼
    ```
 
-4. 重新部署後打開 Vercel 網址。前端與 API 使用同一網域，不需把 Supabase secret key 放進瀏覽器，也不要建立 `VITE_SUPABASE_SECRET_KEY`。
+4. 重新部署後打開 Vercel 網址，檢查 `/api/health`，再於 `/studio` 用工作室密碼登入。前端與 API 使用同一網域，不需把 Supabase secret key 放進瀏覽器，也不要建立 `VITE_SUPABASE_SECRET_KEY`。
+
+### 已付款訂單同步至 Google Drive
+
+1. 使用擁有目標資料夾的**個人 Google 帳號**在 [Google Cloud Console](https://console.cloud.google.com/) 建立專案、啟用 Drive API、設定 OAuth 同意畫面與 OAuth 用戶端。可透過 [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) 的「Use your own OAuth credentials」取得離線 refresh token（授權時需要求 offline access）。對既有私人資料夾，OAuth 授權須能存取該資料夾；`drive.file` 範圍若未透過 Google Picker 選取資料夾，通常不足以讀取它。完整 Drive 範圍屬受限制範圍，公開營運前需按 Google 的規定完成驗證；外部 OAuth 應用若仍在 Testing，refresh token 可能在 7 天後失效。不要把 refresh token 貼在聊天、Git 或前端。
+2. 在 Vercel 伺服器環境變數設定 `GOOGLE_DRIVE_CLIENT_ID`、`GOOGLE_DRIVE_CLIENT_SECRET`、`GOOGLE_DRIVE_REFRESH_TOKEN`、`GOOGLE_DRIVE_FOLDER_ID`。本案目標資料夾 ID 為 `1YHknY68xFWvuL5s7JsoY3dBwV7dyP5Gq`。授權帳號必須對它有新增檔案權限。可在 `/studio` 檢查同步狀態及重試失敗訂單。
+3. WooCommerce 商店建立後，將確認版 `versionId` 寫入訂單項目的 `_wanshi_version_id`，並設定 **Order updated** Webhook，Delivery URL 為 `https://你的-vercel-網域/api/integrations/woocommerce/webhook`。Webhook Secret 與 Vercel 的 `WOOCOMMERCE_WEBHOOK_SECRET` 相同。系統只在訂單狀態為 `processing` 或 `completed` 且有 `date_paid` 時入列；重複通知不會建立第二筆工作。訂單項目沒有 versionId 時不會同步。
+4. Vercel Cron 每天補跑尚未完成的工作，設定 `CRON_SECRET` 後生效。Webhook 收到付款通知時也會立即開始同步。工作室後台可查看結果、開啟 Drive 訂單資料夾，或重試失敗工作。
+
+WooCommerce 商店及付款流程目前尚未建立，編輯器的「加入購物車」仍是站內購物車；要真正觸發以上流程，需完成 WooCommerce 商品、結帳及確認版綁定。詳細的訂單項目合約見 [`docs/WOOCOMMERCE.md`](docs/WOOCOMMERCE.md)。
 
 Vercel Function 的請求／回應負載上限為 4.5 MB，因此正式部署會先向 API 取得限時上傳網址，再由瀏覽器把最高 20 MB 的原圖直接傳到 Supabase 私有 Storage。伺服器完成解碼、格式、像素與雜湊檢查後才會把素材加入設計。預覽與 ZIP 下載同樣使用短效簽名網址，檔案不會設為公開。
 
@@ -111,7 +122,7 @@ UV 預覽僅表達區域與相對強度，不模擬實際高度；輸出為 RGB 
 
 在伺服器環境設定長隨機值 `STUDIO_ADMIN_TOKEN`，重新啟動後由 `/studio` 登入。密碼只送到伺服器驗證，成功後使用 12 小時的 HttpOnly、SameSite=Strict 工作室 cookie；客戶購物車不再出現製作包下載連結。後台會列出所有已確認版本，只有後台可以查看無浮水印預覽及下載 600 PPI ZIP。
 
-正式環境設定 `SUPABASE_URL`、`SUPABASE_SECRET_KEY` 與私有 `SUPABASE_STORAGE_BUCKET` 後，原圖、預覽、600 PPI 彩圖、UV 遮罩與製作包都由伺服器寫入鎖定的 Supabase Storage bucket；service-role secret 只能留在伺服器環境變數，不可暴露給瀏覽器。這已符合「工作室後台或鎖定雲端硬碟」的保存需求，不需把 Google Drive 設成公開連結。
+正式環境設定 `SUPABASE_URL`、`SUPABASE_SECRET_KEY` 與私有 `SUPABASE_STORAGE_BUCKET` 後，原圖、預覽、600 PPI 彩圖、UV 遮罩與製作包都由伺服器寫入鎖定的 Supabase Storage bucket；service-role secret 只能留在伺服器環境變數，不可暴露給瀏覽器。付款後的 Google Drive 同步是額外的工作室訂單副本，目標資料夾保持私人存取。
 
 畫面浮水印、停用下載與低解析預覽可有效阻止一般另存與截圖挪用，但任何能在螢幕顯示的內容都無法做到絕對 DRM。真正的保護邊界是伺服器不向客戶傳送無浮水印預覽、內建素材原檔與正式製作檔。
 
